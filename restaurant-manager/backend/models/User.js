@@ -9,7 +9,7 @@ const userSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true,
+    unique: true,        // Remove this line if causing duplicate index
     lowercase: true,
     trim: true
   },
@@ -36,7 +36,7 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for faster queries
+// Keep only one index definition
 userSchema.index({ email: 1 });
 userSchema.index({ restaurant: 1 });
 

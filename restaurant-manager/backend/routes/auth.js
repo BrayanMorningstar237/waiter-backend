@@ -1,57 +1,82 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+
+console.log('🔧 Loading models for auth route...');
 const User = require('../models/user');
-const { JWT_SECRET } = require('../middleware/auth');
+const Restaurant = require('../models/Restaurant'); // Add this import
+console.log('✅ Models loaded successfully');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'your-fallback-secret-key-change-in-production';
 
 const router = express.Router();
 
-// @route   GET /api/auth
-// @desc    Test auth route
-// @access  Public
 router.get('/', (req, res) => {
   res.json({ message: 'Auth route is working!' });
 });
 
-// @route   POST /api/auth/login
-// @desc    Authenticate user & get token
-// @access  Public
 router.post('/login', async (req, res) => {
+  console.log('🔐 LOGIN ATTEMPT STARTED');
+  console.log('📧 Email:', req.body.email);
+  
   try {
     const { email, password } = req.body;
 
-    // Validate input
     if (!email || !password) {
-      return res.status(400).json({ error: 'Please provide email and password' });
+      return res.status(400).json({ error: 'Email and password required' });
     }
 
-    // Check if user exists
-    const user = await User.findOne({ email }).populate('restaurant');
+    console.log('🔍 Searching for user in database...');
+    
+    // Find user with error handling
+    let user;
+    try {
+      user = await User.findOne({ email }).populate('restaurant');
+    } catch (dbError) {
+      console.error('❌ DATABASE ERROR:', dbError);
+      return res.status(500).json({ error: 'Database error', details: dbError.message });
+    }
+
+    console.log('👤 User search result:', user ? 'FOUND' : 'NOT FOUND');
+    
     if (!user) {
+      console.log('❌ No user found with email:', email);
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
-    // Check if user is active
-    if (!user.isActive) {
-      return res.status(400).json({ error: 'Account is deactivated' });
+    console.log('✅ User found - Name:', user.name);
+    console.log('✅ Restaurant:', user.restaurant?.name);
+
+    // Check password
+    console.log('🔑 Starting password comparison...');
+    let isPasswordValid;
+    try {
+      isPasswordValid = await bcrypt.compare(password, user.password);
+    } catch (bcryptError) {
+      console.error('❌ BCRYPT ERROR:', bcryptError);
+      return res.status(500).json({ error: 'Password verification failed' });
     }
 
-    // Verify password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
+    console.log('🔑 Password valid:', isPasswordValid);
+    
+    if (!isPasswordValid) {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
-    // Create JWT token
-    const payload = {
-      userId: user._id,
-      email: user.email,
-      role: user.role,
-      restaurantId: user.restaurant._id
-    };
+    // Generate token
+    console.log('🎫 Creating JWT token...');
+    const token = jwt.sign(
+      { 
+        userId: user._id,
+        email: user.email,
+        restaurantId: user.restaurant._id 
+      }, 
+      JWT_SECRET, 
+      { expiresIn: '7d' }
+    );
 
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-
+    console.log('✅ LOGIN SUCCESSFUL for:', user.email);
+    
     res.json({
       message: 'Login successful',
       token,
@@ -66,26 +91,13 @@ router.post('/login', async (req, res) => {
         }
       }
     });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ error: 'Server error during authentication' });
-  }
-});
 
-// @route   GET /api/auth/me
-// @desc    Get current user data
-// @access  Private
-router.get('/me', async (req, res) => {
-  try {
-    // This route will be protected by auth middleware
-    const user = await User.findById(req.user._id)
-      .populate('restaurant')
-      .select('-password');
-    
-    res.json({ user });
   } catch (error) {
-    console.error('Get user error:', error);
-    res.status(500).json({ error: 'Server error' });
+    console.error('💥 UNEXPECTED LOGIN ERROR:');
+    console.error('Error name:', error.name);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ error: 'Server error during authentication' });
   }
 });
 
