@@ -38,7 +38,7 @@ const MenuManagement: React.FC = () => {
 
   const filteredItems = menuItems.filter(item => {
     const matchesCategory = selectedCategory === 'all' || 
-      (typeof item.category === 'string' ? item.category : item.category.id) === selectedCategory;
+      (typeof item.category === 'string' ? item.category : item.category?.id) === selectedCategory;
     const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.description.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesCategory && matchesSearch;
@@ -62,6 +62,12 @@ const MenuManagement: React.FC = () => {
   };
 
   const handleEditItem = async (id: string, data: Partial<MenuItem>) => {
+    if (!id) {
+      console.error('Cannot edit item: ID is undefined');
+      alert('Cannot edit item: ID is missing');
+      return;
+    }
+
     try {
       await menuService.updateMenuItem(id, data);
       await loadMenuData();
@@ -73,6 +79,12 @@ const MenuManagement: React.FC = () => {
   };
 
   const handleDeleteItem = async (id: string) => {
+    if (!id) {
+      console.error('Cannot delete item: ID is undefined');
+      alert('Cannot delete item: ID is missing');
+      return;
+    }
+
     if (!confirm('Are you sure you want to delete this menu item?')) return;
 
     try {
@@ -85,6 +97,10 @@ const MenuManagement: React.FC = () => {
   };
 
   const toggleAvailability = async (item: MenuItem) => {
+    if (!item.id) {
+      console.error('Cannot toggle availability: Item ID is undefined');
+      return;
+    }
     await handleEditItem(item.id, { isAvailable: !item.isAvailable });
   };
 
@@ -179,7 +195,7 @@ const MenuManagement: React.FC = () => {
           item={editingItem}
           categories={categories}
           onSave={editingItem ? 
-            (data) => handleEditItem(editingItem.id, data) : 
+            (data) => handleEditItem(editingItem.id!, data) : 
             handleAddItem
           }
           onClose={() => {
@@ -201,7 +217,7 @@ interface MenuItemCardProps {
 }
 
 const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, onEdit, onDelete, onToggleAvailability }) => {
-  const categoryName = typeof item.category === 'string' ? 'Uncategorized' : item.category.name;
+  const categoryName = typeof item.category === 'string' ? 'Uncategorized' : item.category?.name || 'Uncategorized';
 
   return (
     <div className={`bg-white rounded-xl shadow-sm border-2 transition-all duration-200 hover:shadow-md ${
@@ -254,7 +270,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, onEdit, onDelete, onT
               <i
                 key={i}
                 className={`ri-chili-line text-sm ${
-                  i < item.spiceLevel ? 'text-red-500' : 'text-gray-300'
+                  i < (item.spiceLevel || 0) ? 'text-red-500' : 'text-gray-300'
                 }`}
               ></i>
             ))}
@@ -288,7 +304,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, onEdit, onDelete, onT
             <span>Edit</span>
           </button>
           <button
-            onClick={() => onDelete(item.id)}
+            onClick={() => item.id && onDelete(item.id)}
             className="text-red-600 hover:text-red-700 font-semibold text-sm flex items-center space-x-1"
           >
             <i className="ri-delete-bin-line"></i>
