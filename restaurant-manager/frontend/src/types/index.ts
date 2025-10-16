@@ -61,6 +61,8 @@ export interface Category {
   sortOrder: number;
   restaurant: string;
   isPredefined: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface MenuItem {
@@ -78,6 +80,26 @@ export interface MenuItem {
   isGlutenFree?: boolean;
   spiceLevel: number;
   isAvailable: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CreateMenuItemData {
+  name: string;
+  description: string;
+  price: number;
+  category: string;
+  ingredients: string[];
+  preparationTime: number;
+  isVegetarian: boolean;
+  isVegan?: boolean;
+  isGlutenFree?: boolean;
+  spiceLevel: number;
+  image?: string;
+}
+
+export interface UpdateMenuItemData extends Partial<CreateMenuItemData> {
+  isAvailable?: boolean;
 }
 
 export interface Table {
@@ -88,58 +110,4 @@ export interface Table {
   location: string;
   qrCode?: string;
   isAvailable: boolean;
-}
-export interface TestResponse {
-  message: string;
-}
-
-export interface DatabaseTestResponse {
-  message: string;
-  collections: string[];
-}
-
-export interface ApiError {
-  error: string;
-  details?: string;
-}
-
-// Authentication Types
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  role: 'admin' | 'staff';
-  restaurant: Restaurant;
-}
-
-export interface Restaurant {
-  id: string;
-  name: string;
-  description?: string;
-  logo?: string;
-  address?: {
-    street: string;
-    city: string;
-    state: string;
-    zipCode: string;
-  };
-  contact?: {
-    phone: string;
-    email: string;
-  };
-  theme?: {
-    primaryColor: string;
-    secondaryColor: string;
-  };
-}
-
-export interface LoginCredentials {
-  email: string;
-  password: string;
-}
-
-export interface AuthResponse {
-  message: string;
-  token: string;
-  user: User;
 }

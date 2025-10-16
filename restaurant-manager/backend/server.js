@@ -341,7 +341,102 @@ app.get('/api', (req, res) => {
     routes 
   });
 });
+// Menu Items Routes
+app.get('/api/menu-items', async (req, res) => {
+  try {
+    const { restaurantId, categoryId } = req.query;
+    let query = {};
+    
+    if (restaurantId) query.restaurant = restaurantId;
+    if (categoryId) query.category = categoryId;
 
+    const menuItems = await MenuItem.find(query)
+      .populate('category', 'name')
+      .populate('restaurant', 'name')
+      .select('-__v');
+
+    res.json({
+      message: 'Menu items retrieved successfully',
+      menuItems
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch menu items', details: error.message });
+  }
+});
+
+app.get('/api/menu-items/:id', async (req, res) => {
+  try {
+    const menuItem = await MenuItem.findById(req.params.id)
+      .populate('category', 'name')
+      .populate('restaurant', 'name');
+    
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.json({
+      message: 'Menu item retrieved successfully',
+      menuItem
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch menu item', details: error.message });
+  }
+});
+
+app.post('/api/menu-items', async (req, res) => {
+  try {
+    const menuItem = new MenuItem(req.body);
+    const savedItem = await menuItem.save();
+    
+    const populatedItem = await MenuItem.findById(savedItem._id)
+      .populate('category', 'name')
+      .populate('restaurant', 'name');
+
+    res.status(201).json({
+      message: 'Menu item created successfully',
+      menuItem: populatedItem
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create menu item', details: error.message });
+  }
+});
+
+app.put('/api/menu-items/:id', async (req, res) => {
+  try {
+    const menuItem = await MenuItem.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true, runValidators: true }
+    ).populate('category', 'name').populate('restaurant', 'name');
+    
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.json({
+      message: 'Menu item updated successfully',
+      menuItem
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update menu item', details: error.message });
+  }
+});
+
+app.delete('/api/menu-items/:id', async (req, res) => {
+  try {
+    const menuItem = await MenuItem.findByIdAndDelete(req.params.id);
+    
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    res.json({
+      message: 'Menu item deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete menu item', details: error.message });
+  }
+});
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
