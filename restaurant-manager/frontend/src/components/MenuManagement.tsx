@@ -18,51 +18,60 @@ const MenuManagement: React.FC = () => {
   }, []);
 
   const loadMenuData = async () => {
-  if (!user?.restaurant?.id) {
-    console.error('No restaurant ID found in user:', user);
+  if (!user) {
+    console.error('No user found');
     return;
   }
   
   try {
     setLoading(true);
-    console.log('Loading menu data for restaurant:', user.restaurant.id);
+    console.log('🔐 Loading menu data for authenticated user:', user.name);
+    console.log('🏪 User restaurant:', user.restaurant);
     
+    // Remove restaurantId parameters - server gets it from auth token
     const [menuResponse, categoriesResponse] = await Promise.all([
-      menuService.getMenuItems(user.restaurant.id),
-      menuService.getCategories(user.restaurant.id)
+      menuService.getMenuItems(), // No parameters needed
+      menuService.getCategories() // No parameters needed
     ]);
     
-    console.log('Full menu response:', menuResponse);
-    console.log('Full categories response:', categoriesResponse);
+    console.log('📋 Full menu response:', menuResponse);
+    console.log('📁 Full categories response:', categoriesResponse);
     
-    // Handle different response structures and map _id to id
+    // Handle response structures
     const rawMenuItems = menuResponse?.menuItems || menuResponse?.data?.menuItems || menuResponse?.data || [];
     const rawCategories = categoriesResponse?.categories || categoriesResponse?.data?.categories || categoriesResponse?.data || [];
     
     // Map MongoDB _id to id for frontend compatibility
     const menuItems = rawMenuItems.map((item: any) => ({
       ...item,
-      id: item.id || item._id, // Use id if exists, otherwise use _id
-      category: item.category?._id ? { // If category is populated object, extract id
+      id: item.id || item._id,
+      category: item.category?._id ? {
         id: item.category._id,
         name: item.category.name
-      } : item.category // Otherwise keep as string ID
+      } : item.category
     }));
     
     const categories = rawCategories.map((category: any) => ({
       ...category,
-      id: category.id || category._id // Use id if exists, otherwise use _id
+      id: category.id || category._id
     }));
     
-    console.log('Mapped menu items:', menuItems);
-    console.log('Mapped categories:', categories);
+    console.log('✅ Mapped menu items:', menuItems.length);
+    console.log('✅ Mapped categories:', categories.length);
     
     setMenuItems(menuItems);
     setCategories(categories);
   } catch (error: any) {
-    console.error('Failed to load menu data:', error);
-    console.error('Error response:', error.response?.data);
-    alert(`Failed to load menu data: ${error.response?.data?.error || error.message}`);
+    console.error('❌ Failed to load menu data:', error);
+    console.error('📡 Error response:', error.response?.data);
+    
+    // Check if it's an authentication error
+    if (error.response?.status === 401) {
+      alert('Authentication failed. Please log in again.');
+      // You might want to redirect to login here or refresh token
+    } else {
+      alert(`Failed to load menu data: ${error.response?.data?.error || error.message}`);
+    }
   } finally {
     setLoading(false);
   }

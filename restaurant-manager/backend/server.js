@@ -7,7 +7,6 @@ require('dotenv').config();
 const app = express();
 const multer = require('multer');
 
-
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -32,6 +31,7 @@ const upload = multer({
     }
   }
 });
+
 // Middleware
 app.use(cors({
   origin: true,
@@ -68,6 +68,9 @@ const Category = require('./models/Category');
 const MenuItem = require('./models/MenuItem');
 const Table = require('./models/Table');
 
+// Import middleware
+const { auth } = require('./middleware/auth');
+
 // Test Routes
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is working!' });
@@ -85,7 +88,7 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
-// Restaurant Routes
+// Restaurant Routes (public - for landing pages, etc.)
 app.get('/api/restaurants', async (req, res) => {
   try {
     const restaurants = await Restaurant.find().select('-__v');
@@ -113,13 +116,16 @@ app.get('/api/restaurants/:id', async (req, res) => {
   }
 });
 
-// Menu Items Routes
-app.get('/api/menu-items', async (req, res) => {
+// ✅ CORRECTED: Menu Items Routes with proper restaurant filtering
+app.get('/api/menu-items', auth, async (req, res) => {
   try {
-    const { restaurantId, categoryId } = req.query;
-    let query = {};
+    const { categoryId } = req.query;
+    const restaurantId = req.user.restaurant._id; // Get from authenticated user
     
-    if (restaurantId) query.restaurant = restaurantId;
+    console.log(`🔐 Fetching menu items for: ${req.user.restaurant.name} (${restaurantId})`);
+    
+    let query = { restaurant: restaurantId }; // Filter by user's restaurant ONLY
+    
     if (categoryId) query.category = categoryId;
 
     const menuItems = await MenuItem.find(query)
@@ -127,11 +133,14 @@ app.get('/api/menu-items', async (req, res) => {
       .populate('restaurant', 'name')
       .select('-__v');
 
+    console.log(`✅ Found ${menuItems.length} items for ${req.user.restaurant.name}`);
+    
     res.json({
       message: 'Menu items retrieved successfully',
       menuItems
     });
   } catch (error) {
+    console.error('❌ Failed to fetch menu items:', error);
     res.status(500).json({ error: 'Failed to fetch menu items', details: error.message });
   }
 });
@@ -155,29 +164,31 @@ app.get('/api/menu-items/:id', async (req, res) => {
   }
 });
 
-// Categories Routes
-app.get('/api/categories', async (req, res) => {
+// ✅ CORRECTED: Categories Routes with proper restaurant filtering
+app.get('/api/categories', auth, async (req, res) => {
   try {
-    const { restaurantId } = req.query;
-    let query = {};
+    const restaurantId = req.user.restaurant._id; // Get from authenticated user
     
-    if (restaurantId) query.restaurant = restaurantId;
-
-    const categories = await Category.find(query)
+    console.log(`🔐 Fetching categories for: ${req.user.restaurant.name} (${restaurantId})`);
+    
+    const categories = await Category.find({ restaurant: restaurantId })
       .populate('restaurant', 'name')
       .select('-__v')
       .sort('sortOrder');
 
+    console.log(`✅ Found ${categories.length} categories for ${req.user.restaurant.name}`);
+    
     res.json({
       message: 'Categories retrieved successfully',
       categories
     });
   } catch (error) {
+    console.error('❌ Failed to fetch categories:', error);
     res.status(500).json({ error: 'Failed to fetch categories', details: error.message });
   }
 });
 
-// Tables Routes
+// Tables Routes (public - for QR code scanning, etc.)
 app.get('/api/tables', async (req, res) => {
   try {
     const { restaurantId } = req.query;
@@ -289,7 +300,6 @@ app.get('/api/seed-data', async (req, res) => {
 });
 
 // Protected route example
-const { auth } = require('./middleware/auth');
 app.get('/api/protected-test', auth, (req, res) => {
   res.json({ 
     message: 'This is a protected route!',
@@ -328,91 +338,53 @@ app.get('/api/my-restaurant', auth, async (req, res) => {
   }
 });
 
-// List all available routes
-app.get('/api', (req, res) => {
-  const routes = [
-    { method: 'GET', path: '/api', description: 'List all routes' },
-    { method: 'GET', path: '/api/test', description: 'Test backend' },
-    { method: 'GET', path: '/api/test-db', description: 'Test database connection' },
-    { method: 'GET', path: '/api/db-info', description: 'Get database information' },
-    { method: 'GET', path: '/api/seed-data', description: 'Seed database with sample data' },
-    
-    // Restaurant routes
-    { method: 'GET', path: '/api/restaurants', description: 'Get all restaurants' },
-    { method: 'GET', path: '/api/restaurants/:id', description: 'Get specific restaurant' },
-    { method: 'GET', path: '/api/restaurant-data/:restaurantId', description: 'Get complete restaurant data' },
-    
-    // Menu routes
-    { method: 'GET', path: '/api/menu-items', description: 'Get menu items (optional: restaurantId, categoryId)' },
-    { method: 'GET', path: '/api/menu-items/:id', description: 'Get specific menu item' },
-    
-    // Category routes
-    { method: 'GET', path: '/api/categories', description: 'Get categories (optional: restaurantId)' },
-    
-    // Table routes
-    { method: 'GET', path: '/api/tables', description: 'Get tables (optional: restaurantId)' },
-    
-    // Auth routes
-    { method: 'GET', path: '/api/auth', description: 'Auth base route' },
-    { method: 'POST', path: '/api/auth/login', description: 'User login' },
-    { method: 'GET', path: '/api/auth/me', description: 'Get current user (protected)' },
-    
-    // Protected routes
-    { method: 'GET', path: '/api/protected-test', description: 'Test protected route' },
-    { method: 'GET', path: '/api/my-restaurant', description: 'Get current user restaurant data (protected)' }
-  ];
-  
-  res.json({ 
-    message: 'Available API routes',
-    routes 
-  });
-});
-// Menu Items Routes
-app.get('/api/menu-items', async (req, res) => {
+// Debug route to check menu item ownership
+app.get('/api/debug/menu-items-ownership', auth, async (req, res) => {
   try {
-    const { restaurantId, categoryId } = req.query;
-    let query = {};
+    const userRestaurantId = req.user.restaurant._id.toString();
     
-    if (restaurantId) query.restaurant = restaurantId;
-    if (categoryId) query.category = categoryId;
-
-    const menuItems = await MenuItem.find(query)
-      .populate('category', 'name')
-      .populate('restaurant', 'name')
-      .select('-__v');
-
+    // Get all menu items with their restaurant info
+    const allItems = await MenuItem.find()
+      .populate('restaurant', 'name _id')
+      .select('name restaurant');
+    
+    // Count items per restaurant
+    const itemsByRestaurant = {};
+    allItems.forEach(item => {
+      const restId = item.restaurant._id.toString();
+      const restName = item.restaurant.name;
+      
+      if (!itemsByRestaurant[restId]) {
+        itemsByRestaurant[restId] = {
+          restaurantName: restName,
+          count: 0,
+          items: []
+        };
+      }
+      
+      itemsByRestaurant[restId].count++;
+      itemsByRestaurant[restId].items.push(item.name);
+    });
+    
     res.json({
-      message: 'Menu items retrieved successfully',
-      menuItems
+      userRestaurant: {
+        id: userRestaurantId,
+        name: req.user.restaurant.name
+      },
+      itemsByRestaurant,
+      totalItems: allItems.length
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch menu items', details: error.message });
+    res.status(500).json({ error: 'Debug failed', details: error.message });
   }
 });
 
-app.get('/api/menu-items/:id', async (req, res) => {
-  try {
-    const menuItem = await MenuItem.findById(req.params.id)
-      .populate('category', 'name')
-      .populate('restaurant', 'name');
-    
-    if (!menuItem) {
-      return res.status(404).json({ error: 'Menu item not found' });
-    }
-
-    res.json({
-      message: 'Menu item retrieved successfully',
-      menuItem
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch menu item', details: error.message });
-  }
-});
-
-app.post('/api/menu-items', upload.single('image'), async (req, res) => {
+// Create menu item (protected)
+app.post('/api/menu-items', auth, upload.single('image'), async (req, res) => {
   try {
     const menuItemData = {
       ...req.body,
+      restaurant: req.user.restaurant._id, // Set restaurant from authenticated user
       ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
       price: Number(req.body.price),
       preparationTime: Number(req.body.preparationTime),
@@ -445,8 +417,19 @@ app.post('/api/menu-items', upload.single('image'), async (req, res) => {
   }
 });
 
-app.put('/api/menu-items/:id', upload.single('image'), async (req, res) => {
+// Update menu item (protected)
+app.put('/api/menu-items/:id', auth, upload.single('image'), async (req, res) => {
   try {
+    // Verify the menu item belongs to the user's restaurant
+    const existingItem = await MenuItem.findById(req.params.id);
+    if (!existingItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    if (existingItem.restaurant.toString() !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ error: 'Access denied - menu item does not belong to your restaurant' });
+    }
+
     const updateData = {
       ...req.body,
       ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
@@ -484,8 +467,19 @@ app.put('/api/menu-items/:id', upload.single('image'), async (req, res) => {
   }
 });
 
-app.delete('/api/menu-items/:id', async (req, res) => {
+// Delete menu item (protected)
+app.delete('/api/menu-items/:id', auth, async (req, res) => {
   try {
+    // Verify the menu item belongs to the user's restaurant
+    const existingItem = await MenuItem.findById(req.params.id);
+    if (!existingItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    if (existingItem.restaurant.toString() !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ error: 'Access denied - menu item does not belong to your restaurant' });
+    }
+
     const menuItem = await MenuItem.findByIdAndDelete(req.params.id);
     
     if (!menuItem) {
@@ -499,10 +493,16 @@ app.delete('/api/menu-items/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete menu item', details: error.message });
   }
 });
-// Bulk delete menu items by restaurant
-app.delete('/api/menu-items/bulk/restaurant/:restaurantId', async (req, res) => {
+
+// Bulk delete menu items by restaurant (protected)
+app.delete('/api/menu-items/bulk/restaurant/:restaurantId', auth, async (req, res) => {
   try {
     const { restaurantId } = req.params;
+    
+    // Verify the restaurant ID matches the user's restaurant
+    if (restaurantId !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ error: 'Access denied - cannot delete items from other restaurants' });
+    }
     
     console.log(`Bulk deleting menu items for restaurant: ${restaurantId}`);
     
@@ -522,8 +522,8 @@ app.delete('/api/menu-items/bulk/restaurant/:restaurantId', async (req, res) => 
   }
 });
 
-// Bulk delete menu items by IDs
-app.delete('/api/menu-items/bulk/ids', async (req, res) => {
+// Bulk delete menu items by IDs (protected)
+app.delete('/api/menu-items/bulk/ids', auth, async (req, res) => {
   try {
     const { itemIds } = req.body;
     
@@ -534,6 +534,18 @@ app.delete('/api/menu-items/bulk/ids', async (req, res) => {
     }
     
     console.log(`Bulk deleting ${itemIds.length} menu items`);
+    
+    // Verify all items belong to the user's restaurant
+    const items = await MenuItem.find({ _id: { $in: itemIds } });
+    const unauthorizedItems = items.filter(item => 
+      item.restaurant.toString() !== req.user.restaurant._id.toString()
+    );
+    
+    if (unauthorizedItems.length > 0) {
+      return res.status(403).json({ 
+        error: 'Access denied - some items do not belong to your restaurant' 
+      });
+    }
     
     const result = await MenuItem.deleteMany({ 
       _id: { $in: itemIds } 
@@ -553,10 +565,16 @@ app.delete('/api/menu-items/bulk/ids', async (req, res) => {
   }
 });
 
-// Keep only specific number of items (delete all except first N)
-app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', async (req, res) => {
+// Keep only specific number of items (delete all except first N) - protected
+app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', auth, async (req, res) => {
   try {
     const { restaurantId, count } = req.params;
+    
+    // Verify the restaurant ID matches the user's restaurant
+    if (restaurantId !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ error: 'Access denied - cannot modify items from other restaurants' });
+    }
+    
     const keepCount = parseInt(count);
     
     console.log(`Keeping only ${keepCount} items for restaurant: ${restaurantId}`);
@@ -596,6 +614,51 @@ app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', async (r
     });
   }
 });
+
+// List all available routes
+app.get('/api', (req, res) => {
+  const routes = [
+    { method: 'GET', path: '/api', description: 'List all routes' },
+    { method: 'GET', path: '/api/test', description: 'Test backend' },
+    { method: 'GET', path: '/api/test-db', description: 'Test database connection' },
+    { method: 'GET', path: '/api/db-info', description: 'Get database information' },
+    { method: 'GET', path: '/api/seed-data', description: 'Seed database with sample data' },
+    
+    // Restaurant routes
+    { method: 'GET', path: '/api/restaurants', description: 'Get all restaurants' },
+    { method: 'GET', path: '/api/restaurants/:id', description: 'Get specific restaurant' },
+    { method: 'GET', path: '/api/restaurant-data/:restaurantId', description: 'Get complete restaurant data' },
+    
+    // Menu routes (protected)
+    { method: 'GET', path: '/api/menu-items', description: 'Get menu items for logged-in restaurant (protected)' },
+    { method: 'GET', path: '/api/menu-items/:id', description: 'Get specific menu item' },
+    { method: 'POST', path: '/api/menu-items', description: 'Create menu item (protected)' },
+    { method: 'PUT', path: '/api/menu-items/:id', description: 'Update menu item (protected)' },
+    { method: 'DELETE', path: '/api/menu-items/:id', description: 'Delete menu item (protected)' },
+    
+    // Category routes (protected)
+    { method: 'GET', path: '/api/categories', description: 'Get categories for logged-in restaurant (protected)' },
+    
+    // Table routes
+    { method: 'GET', path: '/api/tables', description: 'Get tables (optional: restaurantId)' },
+    
+    // Auth routes
+    { method: 'GET', path: '/api/auth', description: 'Auth base route' },
+    { method: 'POST', path: '/api/auth/login', description: 'User login' },
+    { method: 'GET', path: '/api/auth/me', description: 'Get current user (protected)' },
+    
+    // Protected routes
+    { method: 'GET', path: '/api/protected-test', description: 'Test protected route' },
+    { method: 'GET', path: '/api/my-restaurant', description: 'Get current user restaurant data (protected)' },
+    { method: 'GET', path: '/api/debug/menu-items-ownership', description: 'Debug menu item ownership (protected)' }
+  ];
+  
+  res.json({ 
+    message: 'Available API routes',
+    routes 
+  });
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);

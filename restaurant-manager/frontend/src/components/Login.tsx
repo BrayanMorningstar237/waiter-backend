@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import logo from '../assets/logo.png';
 import type { LoginCredentials } from '../types';
 
 const Login: React.FC = () => {
@@ -48,13 +49,17 @@ const Login: React.FC = () => {
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="text-center">
           <div className="mx-auto h-20 w-20 bg-gradient-to-r from-green-500 to-blue-500 rounded-full flex items-center justify-center shadow-lg">
-            <i className="ri-restaurant-2-line text-3xl text-white"></i>
-          </div>
+      <img
+        src={logo}
+        alt="App Logo"
+        className="h-16 w-16 object-cover rounded-full"
+      />
+    </div>
           <h2 className="mt-6 text-3xl font-bold text-gray-900">
-            Restaurant Manager
+            Waiter Manager
           </h2>
           <p className="mt-2 text-sm text-gray-600">
-            Cameroon Restaurant Management System
+            Manage Your Menu From anywhere, Anytime
           </p>
         </div>
       </div>
