@@ -16,10 +16,13 @@ const verifyAuth = () => {
   
   return token;
 };
-
+const deleteCategory = async (categoryId: string): Promise<any> => {
+  const response = await api.delete(`/api/categories/${categoryId}`);
+  return response.data;
+};
 export const menuService = {
   // Get all menu items for the authenticated user's restaurant
-  getMenuItems: async () => {
+  deleteCategory, getMenuItems: async () => {
     try {
       verifyAuth();
       console.log('🔐 MenuService - Fetching menu items for authenticated restaurant...');

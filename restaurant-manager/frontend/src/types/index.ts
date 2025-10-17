@@ -57,12 +57,10 @@ export interface AuthResponse {
 export interface Category {
   id: string;
   name: string;
-  description: string;
-  sortOrder: number;
+  description?: string; // Add ? to make optional
   restaurant: string;
-  isPredefined: boolean;
-  createdAt?: string;
-  updatedAt?: string;
+  sortOrder: number;
+  isPredefined?: boolean; // Add ? to make optional
 }
 
 export interface MenuItem {

@@ -7,14 +7,47 @@ require('dotenv').config();
 const app = express();
 const multer = require('multer');
 
-// Configure multer for file uploads
+// Configure multer for file uploads with custom filename
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, path.join(__dirname, '../frontend/public/images/menu-items'));
   },
   filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'menu-item-' + uniqueSuffix + path.extname(file.originalname));
+    // Get current date and time for unique identifier
+    const now = new Date();
+    const dateTime = now.toISOString()
+      .replace(/:/g, '-')  // Replace colons with dashes for filename compatibility
+      .replace(/\..+/, ''); // Remove milliseconds
+    
+    // Extract restaurant name and menu item name from request
+    let restaurantName = 'restaurant';
+    let menuItemName = 'item';
+    
+    // Try to get restaurant name from authenticated user
+    if (req.user && req.user.restaurant && req.user.restaurant.name) {
+      restaurantName = req.user.restaurant.name
+        .toLowerCase()
+        .replace(/\s+/g, '-')  // Replace spaces with dashes
+        .replace(/[^a-z0-9-]/g, ''); // Remove special characters
+    }
+    
+    // Try to get menu item name from request body
+    if (req.body && req.body.name) {
+      menuItemName = req.body.name
+        .toLowerCase()
+        .replace(/\s+/g, '-')  // Replace spaces with dashes
+        .replace(/[^a-z0-9-]/g, ''); // Remove special characters
+    }
+    
+    // Create unique filename with restaurant name, item name, and timestamp
+    const uniqueFilename = `${restaurantName}-${menuItemName}-${dateTime}${path.extname(file.originalname)}`;
+    
+    console.log(`📸 Saving image as: ${uniqueFilename}`);
+    console.log(`🏪 Restaurant: ${restaurantName}`);
+    console.log(`🍽️ Menu item: ${menuItemName}`);
+    console.log(`🕐 Timestamp: ${dateTime}`);
+    
+    cb(null, uniqueFilename);
   }
 });
 
@@ -187,7 +220,83 @@ app.get('/api/categories', auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch categories', details: error.message });
   }
 });
+// Create category (protected)
+app.post('/api/categories', auth, async (req, res) => {
+  try {
+    console.log('📁 Creating new category for restaurant:', req.user.restaurant.name);
+    console.log('📝 Category data:', req.body);
+    
+    const categoryData = {
+      ...req.body,
+      restaurant: req.user.restaurant._id, // Set restaurant from authenticated user
+      isPredefined: false // User-created categories are not predefined
+    };
 
+    const category = new Category(categoryData);
+    const savedCategory = await category.save();
+    
+    const populatedCategory = await Category.findById(savedCategory._id)
+      .populate('restaurant', 'name');
+
+    console.log('✅ Category created successfully:', populatedCategory.name);
+    
+    res.status(201).json({
+      message: 'Category created successfully',
+      category: populatedCategory
+    });
+  } catch (error) {
+    console.error('❌ Failed to create category:', error);
+    res.status(500).json({ error: 'Failed to create category', details: error.message });
+  }
+});
+app.delete('/api/categories/:id', auth, async (req, res) => {
+  try {
+    console.log('🗑️ Attempting to delete category:', req.params.id);
+    console.log('🏪 Restaurant:', req.user.restaurant.name);
+    console.log('👤 User:', req.user.email);
+
+    // Find the category first to check ownership and predefined status
+    const category = await Category.findOne({
+      _id: req.params.id,
+      restaurant: req.user.restaurant._id // Ensure category belongs to user's restaurant
+    });
+
+    if (!category) {
+      console.log('❌ Category not found or does not belong to restaurant');
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    // Check if category is predefined
+    if (category.isPredefined) {
+      console.log('❌ Cannot delete predefined category:', category.name);
+      return res.status(403).json({ 
+        error: 'Cannot delete predefined categories. You can only delete categories you created.' 
+      });
+    }
+
+    // Delete the category (only if it's not predefined and belongs to user's restaurant)
+    await Category.findByIdAndDelete(req.params.id);
+    
+    console.log('✅ Category deleted successfully:', category.name);
+    
+    res.json({
+      message: 'Category deleted successfully',
+      deletedCategory: {
+        id: category._id,
+        name: category.name
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to delete category:', error);
+    
+    // Handle specific MongoDB errors
+    if (error.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid category ID' });
+    }
+    
+    res.status(500).json({ error: 'Failed to delete category', details: error.message });
+  }
+});
 // Tables Routes (public - for QR code scanning, etc.)
 app.get('/api/tables', async (req, res) => {
   try {
@@ -382,6 +491,10 @@ app.get('/api/debug/menu-items-ownership', auth, async (req, res) => {
 // Create menu item (protected)
 app.post('/api/menu-items', auth, upload.single('image'), async (req, res) => {
   try {
+    console.log('📦 Creating menu item with data:', req.body);
+    console.log('🏪 Restaurant:', req.user.restaurant.name);
+    console.log('👤 User:', req.user.name);
+    
     const menuItemData = {
       ...req.body,
       restaurant: req.user.restaurant._id, // Set restaurant from authenticated user
@@ -398,6 +511,7 @@ app.post('/api/menu-items', auth, upload.single('image'), async (req, res) => {
     // If image was uploaded, add the image path
     if (req.file) {
       menuItemData.image = `/images/menu-items/${req.file.filename}`;
+      console.log('📸 Image saved:', req.file.filename);
     }
 
     const menuItem = new MenuItem(menuItemData);
@@ -407,12 +521,14 @@ app.post('/api/menu-items', auth, upload.single('image'), async (req, res) => {
       .populate('category', 'name')
       .populate('restaurant', 'name');
 
+    console.log('✅ Menu item created successfully:', populatedItem.name);
+    
     res.status(201).json({
       message: 'Menu item created successfully',
       menuItem: populatedItem
     });
   } catch (error) {
-    console.error('Failed to create menu item:', error);
+    console.error('❌ Failed to create menu item:', error);
     res.status(500).json({ error: 'Failed to create menu item', details: error.message });
   }
 });
@@ -430,6 +546,10 @@ app.put('/api/menu-items/:id', auth, upload.single('image'), async (req, res) =>
       return res.status(403).json({ error: 'Access denied - menu item does not belong to your restaurant' });
     }
 
+    console.log('📦 Updating menu item:', req.params.id);
+    console.log('🏪 Restaurant:', req.user.restaurant.name);
+    console.log('📝 Update data:', req.body);
+
     const updateData = {
       ...req.body,
       ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
@@ -445,6 +565,7 @@ app.put('/api/menu-items/:id', auth, upload.single('image'), async (req, res) =>
     // If image was uploaded, update the image path
     if (req.file) {
       updateData.image = `/images/menu-items/${req.file.filename}`;
+      console.log('📸 New image saved:', req.file.filename);
     }
 
     const menuItem = await MenuItem.findByIdAndUpdate(
@@ -457,12 +578,14 @@ app.put('/api/menu-items/:id', auth, upload.single('image'), async (req, res) =>
       return res.status(404).json({ error: 'Menu item not found' });
     }
 
+    console.log('✅ Menu item updated successfully:', menuItem.name);
+    
     res.json({
       message: 'Menu item updated successfully',
       menuItem
     });
   } catch (error) {
-    console.error('Failed to update menu item:', error);
+    console.error('❌ Failed to update menu item:', error);
     res.status(500).json({ error: 'Failed to update menu item', details: error.message });
   }
 });
@@ -480,16 +603,22 @@ app.delete('/api/menu-items/:id', auth, async (req, res) => {
       return res.status(403).json({ error: 'Access denied - menu item does not belong to your restaurant' });
     }
 
+    console.log('🗑️ Deleting menu item:', existingItem.name);
+    console.log('🏪 Restaurant:', req.user.restaurant.name);
+
     const menuItem = await MenuItem.findByIdAndDelete(req.params.id);
     
     if (!menuItem) {
       return res.status(404).json({ error: 'Menu item not found' });
     }
 
+    console.log('✅ Menu item deleted successfully');
+    
     res.json({
       message: 'Menu item deleted successfully'
     });
   } catch (error) {
+    console.error('❌ Failed to delete menu item:', error);
     res.status(500).json({ error: 'Failed to delete menu item', details: error.message });
   }
 });
@@ -504,17 +633,19 @@ app.delete('/api/menu-items/bulk/restaurant/:restaurantId', auth, async (req, re
       return res.status(403).json({ error: 'Access denied - cannot delete items from other restaurants' });
     }
     
-    console.log(`Bulk deleting menu items for restaurant: ${restaurantId}`);
+    console.log(`🗑️ Bulk deleting menu items for restaurant: ${req.user.restaurant.name} (${restaurantId})`);
     
     // Delete all menu items for this restaurant
     const result = await MenuItem.deleteMany({ restaurant: restaurantId });
     
+    console.log(`✅ Successfully deleted ${result.deletedCount} menu items`);
+    
     res.json({
-      message: `Successfully deleted ${result.deletedCount} menu items for restaurant ${restaurantId}`,
+      message: `Successfully deleted ${result.deletedCount} menu items for restaurant ${req.user.restaurant.name}`,
       deletedCount: result.deletedCount
     });
   } catch (error) {
-    console.error('Failed to bulk delete menu items:', error);
+    console.error('❌ Failed to bulk delete menu items:', error);
     res.status(500).json({ 
       error: 'Failed to bulk delete menu items', 
       details: error.message 
@@ -533,7 +664,7 @@ app.delete('/api/menu-items/bulk/ids', auth, async (req, res) => {
       });
     }
     
-    console.log(`Bulk deleting ${itemIds.length} menu items`);
+    console.log(`🗑️ Bulk deleting ${itemIds.length} menu items for restaurant: ${req.user.restaurant.name}`);
     
     // Verify all items belong to the user's restaurant
     const items = await MenuItem.find({ _id: { $in: itemIds } });
@@ -551,13 +682,15 @@ app.delete('/api/menu-items/bulk/ids', auth, async (req, res) => {
       _id: { $in: itemIds } 
     });
     
+    console.log(`✅ Successfully deleted ${result.deletedCount} menu items`);
+    
     res.json({
       message: `Successfully deleted ${result.deletedCount} menu items`,
       deletedCount: result.deletedCount,
       requestedCount: itemIds.length
     });
   } catch (error) {
-    console.error('Failed to bulk delete menu items:', error);
+    console.error('❌ Failed to bulk delete menu items:', error);
     res.status(500).json({ 
       error: 'Failed to bulk delete menu items', 
       details: error.message 
@@ -577,7 +710,7 @@ app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', auth, as
     
     const keepCount = parseInt(count);
     
-    console.log(`Keeping only ${keepCount} items for restaurant: ${restaurantId}`);
+    console.log(`🗑️ Keeping only ${keepCount} items for restaurant: ${req.user.restaurant.name}`);
     
     // First, get all menu items for this restaurant sorted by creation date
     const allItems = await MenuItem.find({ restaurant: restaurantId })
@@ -595,10 +728,14 @@ app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', auth, as
     const itemsToDelete = allItems.slice(keepCount);
     const itemIdsToDelete = itemsToDelete.map(item => item._id);
     
+    console.log(`🗑️ Deleting ${itemsToDelete.length} items, keeping ${keepCount}`);
+    
     // Delete the items
     const result = await MenuItem.deleteMany({ 
       _id: { $in: itemIdsToDelete } 
     });
+    
+    console.log(`✅ Successfully kept ${keepCount} items and deleted ${result.deletedCount} items`);
     
     res.json({
       message: `Successfully kept ${keepCount} items and deleted ${result.deletedCount} items`,
@@ -607,7 +744,7 @@ app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', auth, as
       totalItemsBefore: allItems.length
     });
   } catch (error) {
-    console.error('Failed to bulk delete menu items:', error);
+    console.error('❌ Failed to bulk delete menu items:', error);
     res.status(500).json({ 
       error: 'Failed to bulk delete menu items', 
       details: error.message 
@@ -665,4 +802,5 @@ app.listen(PORT, () => {
   console.log(`🔐 JWT Secret: ${JWT_SECRET === 'your-fallback-secret-key-change-in-production' ? 'Using fallback - set JWT_SECRET in .env' : 'Using environment variable'}`);
   console.log(`🌐 API available at: http://localhost:${PORT}/api`);
   console.log(`🖼️ Static images served from: http://localhost:${PORT}/images`);
+  console.log(`📸 Image naming format: restaurantName-itemName-YYYY-MM-DDTHH-MM-SS.ext`);
 });
