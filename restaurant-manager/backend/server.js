@@ -5,7 +5,33 @@ const path = require('path');
 require('dotenv').config();
 
 const app = express();
+const multer = require('multer');
 
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, '../frontend/public/images/menu-items'));
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, 'menu-item-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: function (req, file, cb) {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'), false);
+    }
+  }
+});
 // Middleware
 app.use(cors({
   origin: true,
@@ -383,9 +409,26 @@ app.get('/api/menu-items/:id', async (req, res) => {
   }
 });
 
-app.post('/api/menu-items', async (req, res) => {
+app.post('/api/menu-items', upload.single('image'), async (req, res) => {
   try {
-    const menuItem = new MenuItem(req.body);
+    const menuItemData = {
+      ...req.body,
+      ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
+      price: Number(req.body.price),
+      preparationTime: Number(req.body.preparationTime),
+      spiceLevel: Number(req.body.spiceLevel),
+      isVegetarian: req.body.isVegetarian === 'true',
+      isVegan: req.body.isVegan === 'true',
+      isGlutenFree: req.body.isGlutenFree === 'true',
+      isAvailable: req.body.isAvailable === 'true'
+    };
+
+    // If image was uploaded, add the image path
+    if (req.file) {
+      menuItemData.image = `/images/menu-items/${req.file.filename}`;
+    }
+
+    const menuItem = new MenuItem(menuItemData);
     const savedItem = await menuItem.save();
     
     const populatedItem = await MenuItem.findById(savedItem._id)
@@ -397,15 +440,33 @@ app.post('/api/menu-items', async (req, res) => {
       menuItem: populatedItem
     });
   } catch (error) {
+    console.error('Failed to create menu item:', error);
     res.status(500).json({ error: 'Failed to create menu item', details: error.message });
   }
 });
 
-app.put('/api/menu-items/:id', async (req, res) => {
+app.put('/api/menu-items/:id', upload.single('image'), async (req, res) => {
   try {
+    const updateData = {
+      ...req.body,
+      ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
+      price: req.body.price ? Number(req.body.price) : undefined,
+      preparationTime: req.body.preparationTime ? Number(req.body.preparationTime) : undefined,
+      spiceLevel: req.body.spiceLevel ? Number(req.body.spiceLevel) : undefined,
+      isVegetarian: req.body.isVegetarian ? req.body.isVegetarian === 'true' : undefined,
+      isVegan: req.body.isVegan ? req.body.isVegan === 'true' : undefined,
+      isGlutenFree: req.body.isGlutenFree ? req.body.isGlutenFree === 'true' : undefined,
+      isAvailable: req.body.isAvailable ? req.body.isAvailable === 'true' : undefined
+    };
+
+    // If image was uploaded, update the image path
+    if (req.file) {
+      updateData.image = `/images/menu-items/${req.file.filename}`;
+    }
+
     const menuItem = await MenuItem.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updateData,
       { new: true, runValidators: true }
     ).populate('category', 'name').populate('restaurant', 'name');
     
@@ -418,6 +479,7 @@ app.put('/api/menu-items/:id', async (req, res) => {
       menuItem
     });
   } catch (error) {
+    console.error('Failed to update menu item:', error);
     res.status(500).json({ error: 'Failed to update menu item', details: error.message });
   }
 });
@@ -435,6 +497,103 @@ app.delete('/api/menu-items/:id', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to delete menu item', details: error.message });
+  }
+});
+// Bulk delete menu items by restaurant
+app.delete('/api/menu-items/bulk/restaurant/:restaurantId', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    
+    console.log(`Bulk deleting menu items for restaurant: ${restaurantId}`);
+    
+    // Delete all menu items for this restaurant
+    const result = await MenuItem.deleteMany({ restaurant: restaurantId });
+    
+    res.json({
+      message: `Successfully deleted ${result.deletedCount} menu items for restaurant ${restaurantId}`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    console.error('Failed to bulk delete menu items:', error);
+    res.status(500).json({ 
+      error: 'Failed to bulk delete menu items', 
+      details: error.message 
+    });
+  }
+});
+
+// Bulk delete menu items by IDs
+app.delete('/api/menu-items/bulk/ids', async (req, res) => {
+  try {
+    const { itemIds } = req.body;
+    
+    if (!itemIds || !Array.isArray(itemIds)) {
+      return res.status(400).json({ 
+        error: 'itemIds array is required in request body' 
+      });
+    }
+    
+    console.log(`Bulk deleting ${itemIds.length} menu items`);
+    
+    const result = await MenuItem.deleteMany({ 
+      _id: { $in: itemIds } 
+    });
+    
+    res.json({
+      message: `Successfully deleted ${result.deletedCount} menu items`,
+      deletedCount: result.deletedCount,
+      requestedCount: itemIds.length
+    });
+  } catch (error) {
+    console.error('Failed to bulk delete menu items:', error);
+    res.status(500).json({ 
+      error: 'Failed to bulk delete menu items', 
+      details: error.message 
+    });
+  }
+});
+
+// Keep only specific number of items (delete all except first N)
+app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', async (req, res) => {
+  try {
+    const { restaurantId, count } = req.params;
+    const keepCount = parseInt(count);
+    
+    console.log(`Keeping only ${keepCount} items for restaurant: ${restaurantId}`);
+    
+    // First, get all menu items for this restaurant sorted by creation date
+    const allItems = await MenuItem.find({ restaurant: restaurantId })
+      .sort({ createdAt: 1 }); // oldest first
+    
+    if (allItems.length <= keepCount) {
+      return res.json({
+        message: `No items to delete. Restaurant already has ${allItems.length} items (<= ${keepCount})`,
+        deletedCount: 0,
+        keptCount: allItems.length
+      });
+    }
+    
+    // Items to delete (all except first 'keepCount' items)
+    const itemsToDelete = allItems.slice(keepCount);
+    const itemIdsToDelete = itemsToDelete.map(item => item._id);
+    
+    // Delete the items
+    const result = await MenuItem.deleteMany({ 
+      _id: { $in: itemIdsToDelete } 
+    });
+    
+    res.json({
+      message: `Successfully kept ${keepCount} items and deleted ${result.deletedCount} items`,
+      deletedCount: result.deletedCount,
+      keptCount: keepCount,
+      totalItemsBefore: allItems.length
+    });
+  } catch (error) {
+    console.error('Failed to bulk delete menu items:', error);
+    res.status(500).json({ 
+      error: 'Failed to bulk delete menu items', 
+      details: error.message 
+    });
   }
 });
 const PORT = process.env.PORT || 5000;

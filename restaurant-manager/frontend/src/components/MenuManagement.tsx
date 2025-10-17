@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { menuService } from '../services/menu';
-import type { MenuItem, Category, CreateMenuItemData } from '../types';
+import type { MenuItem, Category, CreateMenuItemData, UpdateMenuItemData  } from '../types';
 
 const MenuManagement: React.FC = () => {
   const { user } = useAuth();
@@ -18,23 +18,55 @@ const MenuManagement: React.FC = () => {
   }, []);
 
   const loadMenuData = async () => {
-    if (!user?.restaurant.id) return;
+  if (!user?.restaurant?.id) {
+    console.error('No restaurant ID found in user:', user);
+    return;
+  }
+  
+  try {
+    setLoading(true);
+    console.log('Loading menu data for restaurant:', user.restaurant.id);
     
-    try {
-      setLoading(true);
-      const [menuResponse, categoriesResponse] = await Promise.all([
-        menuService.getMenuItems(user.restaurant.id),
-        menuService.getCategories(user.restaurant.id)
-      ]);
-      
-      setMenuItems(menuResponse.menuItems || []);
-      setCategories(categoriesResponse.categories || []);
-    } catch (error) {
-      console.error('Failed to load menu data:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    const [menuResponse, categoriesResponse] = await Promise.all([
+      menuService.getMenuItems(user.restaurant.id),
+      menuService.getCategories(user.restaurant.id)
+    ]);
+    
+    console.log('Full menu response:', menuResponse);
+    console.log('Full categories response:', categoriesResponse);
+    
+    // Handle different response structures and map _id to id
+    const rawMenuItems = menuResponse?.menuItems || menuResponse?.data?.menuItems || menuResponse?.data || [];
+    const rawCategories = categoriesResponse?.categories || categoriesResponse?.data?.categories || categoriesResponse?.data || [];
+    
+    // Map MongoDB _id to id for frontend compatibility
+    const menuItems = rawMenuItems.map((item: any) => ({
+      ...item,
+      id: item.id || item._id, // Use id if exists, otherwise use _id
+      category: item.category?._id ? { // If category is populated object, extract id
+        id: item.category._id,
+        name: item.category.name
+      } : item.category // Otherwise keep as string ID
+    }));
+    
+    const categories = rawCategories.map((category: any) => ({
+      ...category,
+      id: category.id || category._id // Use id if exists, otherwise use _id
+    }));
+    
+    console.log('Mapped menu items:', menuItems);
+    console.log('Mapped categories:', categories);
+    
+    setMenuItems(menuItems);
+    setCategories(categories);
+  } catch (error: any) {
+    console.error('Failed to load menu data:', error);
+    console.error('Error response:', error.response?.data);
+    alert(`Failed to load menu data: ${error.response?.data?.error || error.message}`);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const filteredItems = menuItems.filter(item => {
     const matchesCategory = selectedCategory === 'all' || 
@@ -44,61 +76,84 @@ const MenuManagement: React.FC = () => {
     return matchesCategory && matchesSearch;
   });
 
-  const handleAddItem = async (data: CreateMenuItemData) => {
-    if (!user?.restaurant.id) return;
+  const handleAddItem = async (data: CreateMenuItemData, imageFile?: File) => {
+  if (!user?.restaurant?.id) {
+    alert('No restaurant ID found');
+    return;
+  }
 
-    try {
-      await menuService.createMenuItem({
-        ...data,
-        restaurant: user.restaurant.id,
-        isAvailable: true
-      });
-      await loadMenuData();
-      setShowAddModal(false);
-    } catch (error) {
-      console.error('Failed to create menu item:', error);
-      alert('Failed to create menu item');
-    }
-  };
+  try {
+    console.log('Creating menu item with data:', data, 'Image file:', imageFile);
+    
+    const payload: CreateMenuItemData = {
+      ...data,
+      restaurant: user.restaurant.id,
+      isAvailable: true
+    };
 
-  const handleEditItem = async (id: string, data: Partial<MenuItem>) => {
-    if (!id) {
-      console.error('Cannot edit item: ID is undefined');
-      alert('Cannot edit item: ID is missing');
-      return;
-    }
+    await menuService.createMenuItem(payload, imageFile);
+    await loadMenuData();
+    setShowAddModal(false);
+    alert('Menu item created successfully!');
+  } catch (error: any) {
+    console.error('Failed to create menu item:', error);
+    alert(`Failed to create menu item: ${error.response?.data?.error || error.message}`);
+  }
+};
 
-    try {
-      await menuService.updateMenuItem(id, data);
-      await loadMenuData();
-      setEditingItem(null);
-    } catch (error) {
-      console.error('Failed to update menu item:', error);
-      alert('Failed to update menu item');
-    }
-  };
+  const handleEditItem = async (id: string, data: Partial<MenuItem>, imageFile?: File) => {
+  console.log('Editing item with ID:', id, 'Data:', data, 'Image file:', imageFile);
+  
+  if (!id || id === 'undefined') {
+    console.error('Cannot edit item: ID is invalid', id);
+    alert('Cannot edit item: ID is missing or invalid');
+    return;
+  }
+
+  try {
+    // Convert the data to UpdateMenuItemData format
+    const updateData: UpdateMenuItemData = {
+      ...data,
+      // Ensure category is a string, not a Category object
+      category: typeof data.category === 'string' ? data.category : (data.category as any)?.id
+    };
+
+    const response = await menuService.updateMenuItem(id, updateData, imageFile);
+    console.log('Update response:', response.data);
+    await loadMenuData();
+    setEditingItem(null);
+    alert('Menu item updated successfully!');
+  } catch (error: any) {
+    console.error('Failed to update menu item:', error);
+    alert(`Failed to update menu item: ${error.response?.data?.error || error.message}`);
+  }
+};
 
   const handleDeleteItem = async (id: string) => {
-    if (!id) {
-      console.error('Cannot delete item: ID is undefined');
-      alert('Cannot delete item: ID is missing');
+    console.log('Deleting item with ID:', id);
+    
+    if (!id || id === 'undefined') {
+      console.error('Cannot delete item: ID is invalid', id);
+      alert('Cannot delete item: ID is missing or invalid');
       return;
     }
 
     if (!confirm('Are you sure you want to delete this menu item?')) return;
 
     try {
-      await menuService.deleteMenuItem(id);
+      const response = await menuService.deleteMenuItem(id);
+      console.log('Delete response:', response.data);
       await loadMenuData();
-    } catch (error) {
+      alert('Menu item deleted successfully!');
+    } catch (error: any) {
       console.error('Failed to delete menu item:', error);
-      alert('Failed to delete menu item');
+      alert(`Failed to delete menu item: ${error.response?.data?.error || error.message}`);
     }
   };
 
   const toggleAvailability = async (item: MenuItem) => {
     if (!item.id) {
-      console.error('Cannot toggle availability: Item ID is undefined');
+      console.error('Cannot toggle availability: Item ID is undefined', item);
       return;
     }
     await handleEditItem(item.id, { isAvailable: !item.isAvailable });
@@ -122,6 +177,7 @@ const MenuManagement: React.FC = () => {
         <div>
           <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">Menu Management</h1>
           <p className="text-gray-600 mt-1">Manage your restaurant menu items and categories</p>
+          <p className="text-sm text-gray-500">Restaurant ID: {user?.restaurant?.id}</p>
         </div>
         <button
           onClick={() => setShowAddModal(true)}
@@ -162,6 +218,19 @@ const MenuManagement: React.FC = () => {
         </div>
       </div>
 
+      {/* Debug Info */}
+      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <div className="flex items-center space-x-2 text-yellow-800">
+          <i className="ri-information-line"></i>
+          <span className="font-semibold">Debug Info:</span>
+        </div>
+        <div className="text-sm text-yellow-700 mt-1">
+          <p>Menu Items: {menuItems.length}</p>
+          <p>Categories: {categories.length}</p>
+          <p>Filtered Items: {filteredItems.length}</p>
+        </div>
+      </div>
+
       {/* Menu Items Grid */}
       {filteredItems.length === 0 ? (
         <div className="bg-white rounded-xl p-12 text-center shadow-sm border border-gray-200/50">
@@ -191,19 +260,23 @@ const MenuManagement: React.FC = () => {
 
       {/* Add/Edit Modal */}
       {(showAddModal || editingItem) && (
-        <MenuItemModal
-          item={editingItem}
-          categories={categories}
-          onSave={editingItem ? 
-            (data) => handleEditItem(editingItem.id!, data) : 
-            handleAddItem
-          }
-          onClose={() => {
-            setShowAddModal(false);
-            setEditingItem(null);
-          }}
-        />
-      )}
+  <MenuItemModal
+    item={editingItem}
+    categories={categories}
+    onSave={editingItem ? 
+      (data, imageFile) => {
+        console.log('Saving edit for item:', editingItem);
+        console.log('Item ID:', editingItem.id);
+        handleEditItem(editingItem.id!, data, imageFile);
+      } : 
+      (data, imageFile) => handleAddItem(data, imageFile)
+    }
+    onClose={() => {
+      setShowAddModal(false);
+      setEditingItem(null);
+    }}
+  />
+)}
     </div>
   );
 };
@@ -218,6 +291,8 @@ interface MenuItemCardProps {
 
 const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, onEdit, onDelete, onToggleAvailability }) => {
   const categoryName = typeof item.category === 'string' ? 'Uncategorized' : item.category?.name || 'Uncategorized';
+
+  console.log('Rendering menu item card:', item.id, item.name);
 
   return (
     <div className={`bg-white rounded-xl shadow-sm border-2 transition-all duration-200 hover:shadow-md ${
@@ -297,14 +372,26 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, onEdit, onDelete, onT
 
         <div className="flex items-center justify-between pt-3 border-t border-gray-100">
           <button
-            onClick={() => onEdit(item)}
+            onClick={() => {
+              console.log('Edit button clicked for item:', item);
+              console.log('Item ID:', item.id);
+              onEdit(item);
+            }}
             className="text-blue-600 hover:text-blue-700 font-semibold text-sm flex items-center space-x-1"
           >
             <i className="ri-edit-line"></i>
             <span>Edit</span>
           </button>
           <button
-            onClick={() => item.id && onDelete(item.id)}
+            onClick={() => {
+              console.log('Delete button clicked for item:', item);
+              console.log('Item ID:', item.id);
+              if (item.id) {
+                onDelete(item.id);
+              } else {
+                alert('Cannot delete: Item ID is missing');
+              }
+            }}
             className="text-red-600 hover:text-red-700 font-semibold text-sm flex items-center space-x-1"
           >
             <i className="ri-delete-bin-line"></i>
@@ -320,11 +407,12 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, onEdit, onDelete, onT
 interface MenuItemModalProps {
   item?: MenuItem | null;
   categories: Category[];
-  onSave: (data: any) => void;
+  onSave: (data: any, imageFile?: File) => void;
   onClose: () => void;
 }
 
 const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave, onClose }) => {
+  const { user } = useAuth();
   const [formData, setFormData] = useState({
     name: item?.name || '',
     description: item?.description || '',
@@ -336,18 +424,79 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
     isVegan: item?.isVegan || false,
     isGlutenFree: item?.isGlutenFree || false,
     spiceLevel: item?.spiceLevel || 0,
-    image: item?.image || '',
   });
+  
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string>(item?.image || '');
+  const [uploading, setUploading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        alert('Please select an image file');
+        return;
+      }
+      
+      // Validate file size (5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('Image size should be less than 5MB');
+        return;
+      }
+      
+      setImageFile(file);
+      
+      // Create preview
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setImagePreview(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setImageFile(null);
+    setImagePreview('');
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave({
-      ...formData,
-      price: Number(formData.price),
-      preparationTime: Number(formData.preparationTime),
-      spiceLevel: Number(formData.spiceLevel),
-      ingredients: formData.ingredients.split(',').map(ing => ing.trim()).filter(ing => ing),
-    });
+    
+    if (uploading) return;
+    
+    try {
+      setUploading(true);
+      console.log('Form submitted with data:', formData);
+      
+      const submitData = {
+        ...formData,
+        price: Number(formData.price),
+        preparationTime: Number(formData.preparationTime),
+        spiceLevel: Number(formData.spiceLevel),
+        ingredients: formData.ingredients.split(',').map(ing => ing.trim()).filter(ing => ing),
+      };
+
+      // For editing, ensure we only pass the category ID as string
+      if (item) {
+        const updateData: UpdateMenuItemData = {
+          ...submitData,
+          category: formData.category // This is already a string from the form
+        };
+        onSave(updateData, imageFile || undefined);
+      } else {
+        // For creating, include restaurant ID
+        onSave({
+          ...submitData,
+          restaurant: user?.restaurant?.id || ''
+        }, imageFile || undefined);
+      }
+    } catch (error) {
+      console.error('Error submitting form:', error);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleChange = (field: string, value: any) => {
@@ -360,11 +509,12 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
         <div className="p-6 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-gray-900">
-              {item ? 'Edit Menu Item' : 'Add New Menu Item'}
+              {item ? `Edit Menu Item (ID: ${item.id})` : 'Add New Menu Item'}
             </h2>
             <button
               onClick={onClose}
               className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              disabled={uploading}
             >
               <i className="ri-close-line text-xl"></i>
             </button>
@@ -373,6 +523,67 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Image Upload */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-semibold text-gray-900 mb-2">
+                Item Image
+              </label>
+              <div className="flex items-center space-x-6">
+                {/* Image Preview */}
+                <div className="flex-shrink-0">
+                  {imagePreview ? (
+                    <div className="relative">
+                      <img
+                        src={imagePreview}
+                        alt="Preview"
+                        className="w-32 h-32 object-cover rounded-lg border border-gray-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleRemoveImage}
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition-colors"
+                      >
+                        <i className="ri-close-line text-sm"></i>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-32 h-32 bg-gray-100 rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center">
+                      <i className="ri-image-line text-2xl text-gray-400"></i>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Upload Controls */}
+                <div className="flex-1">
+                  <div className="space-y-2">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageChange}
+                      className="hidden"
+                      id="image-upload"
+                    />
+                    <label
+                      htmlFor="image-upload"
+                      className="block w-full bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600 transition-colors text-center cursor-pointer"
+                    >
+                      <i className="ri-upload-line mr-2"></i>
+                      Choose Image
+                    </label>
+                    <p className="text-xs text-gray-500">
+                      Recommended: Square image, max 5MB. JPG, PNG, or WebP.
+                    </p>
+                    {imageFile && (
+                      <p className="text-sm text-green-600">
+                        <i className="ri-check-line mr-1"></i>
+                        {imageFile.name} ({(imageFile.size / 1024 / 1024).toFixed(2)} MB)
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Name */}
             <div className="md:col-span-2">
               <label className="block text-sm font-semibold text-gray-900 mb-2">
@@ -385,6 +596,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                 onChange={(e) => handleChange('name', e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 placeholder="e.g., Grilled Tilapia"
+                disabled={uploading}
               />
             </div>
 
@@ -400,6 +612,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                 rows={3}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 placeholder="Describe this menu item..."
+                disabled={uploading}
               />
             </div>
 
@@ -417,6 +630,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                 onChange={(e) => handleChange('price', e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 placeholder="2500"
+                disabled={uploading}
               />
             </div>
 
@@ -430,6 +644,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                 value={formData.category}
                 onChange={(e) => handleChange('category', e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                disabled={uploading}
               >
                 <option value="">Select a category</option>
                 {categories.map(category => (
@@ -451,6 +666,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                 value={formData.preparationTime}
                 onChange={(e) => handleChange('preparationTime', e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                disabled={uploading}
               />
             </div>
 
@@ -469,7 +685,8 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                       formData.spiceLevel >= level 
                         ? 'bg-red-100 text-red-600' 
                         : 'bg-gray-100 text-gray-400'
-                    }`}
+                    } ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    disabled={uploading}
                   >
                     <i className="ri-chili-line"></i>
                   </button>
@@ -488,6 +705,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                 onChange={(e) => handleChange('ingredients', e.target.value)}
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 placeholder="e.g., Rice, Chicken, Vegetables, Spices"
+                disabled={uploading}
               />
             </div>
 
@@ -503,6 +721,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                     checked={formData.isVegetarian}
                     onChange={(e) => handleChange('isVegetarian', e.target.checked)}
                     className="rounded border-gray-300 text-green-500 focus:ring-green-500"
+                    disabled={uploading}
                   />
                   <span className="text-sm text-gray-700">Vegetarian</span>
                 </label>
@@ -512,6 +731,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                     checked={formData.isVegan}
                     onChange={(e) => handleChange('isVegan', e.target.checked)}
                     className="rounded border-gray-300 text-green-500 focus:ring-green-500"
+                    disabled={uploading}
                   />
                   <span className="text-sm text-gray-700">Vegan</span>
                 </label>
@@ -521,24 +741,11 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
                     checked={formData.isGlutenFree}
                     onChange={(e) => handleChange('isGlutenFree', e.target.checked)}
                     className="rounded border-gray-300 text-green-500 focus:ring-green-500"
+                    disabled={uploading}
                   />
                   <span className="text-sm text-gray-700">Gluten Free</span>
                 </label>
               </div>
-            </div>
-
-            {/* Image URL */}
-            <div className="md:col-span-2">
-              <label className="block text-sm font-semibold text-gray-900 mb-2">
-                Image URL (optional)
-              </label>
-              <input
-                type="url"
-                value={formData.image}
-                onChange={(e) => handleChange('image', e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                placeholder="https://example.com/image.jpg"
-              />
             </div>
           </div>
 
@@ -548,15 +755,26 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({ item, categories, onSave,
               type="button"
               onClick={onClose}
               className="px-6 py-3 text-gray-700 font-semibold hover:bg-gray-100 rounded-lg transition-colors"
+              disabled={uploading}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="bg-green-500 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-600 transition-colors flex items-center space-x-2"
+              className="bg-green-500 text-white px-6 py-3 rounded-xl font-semibold hover:bg-green-600 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={uploading}
             >
-              <i className="ri-save-line"></i>
-              <span>{item ? 'Update Item' : 'Create Item'}</span>
+              {uploading ? (
+                <>
+                  <i className="ri-loader-4-line animate-spin"></i>
+                  <span>{item ? 'Updating...' : 'Creating...'}</span>
+                </>
+              ) : (
+                <>
+                  <i className="ri-save-line"></i>
+                  <span>{item ? 'Update Item' : 'Create Item'}</span>
+                </>
+              )}
             </button>
           </div>
         </form>

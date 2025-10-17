@@ -89,6 +89,7 @@ export interface CreateMenuItemData {
   description: string;
   price: number;
   category: string;
+  restaurant: string;
   ingredients: string[];
   preparationTime: number;
   isVegetarian: boolean;
@@ -96,9 +97,21 @@ export interface CreateMenuItemData {
   isGlutenFree?: boolean;
   spiceLevel: number;
   image?: string;
+  isAvailable?: boolean;
 }
 
-export interface UpdateMenuItemData extends Partial<CreateMenuItemData> {
+export interface UpdateMenuItemData {
+  name?: string;
+  description?: string;
+  price?: number;
+  category?: string; // Only string, not Category object
+  ingredients?: string[];
+  preparationTime?: number;
+  isVegetarian?: boolean;
+  isVegan?: boolean;
+  isGlutenFree?: boolean;
+  spiceLevel?: number;
+  image?: string;
   isAvailable?: boolean;
 }
 
@@ -110,4 +123,88 @@ export interface Table {
   location: string;
   qrCode?: string;
   isAvailable: boolean;
+}
+
+// API Response Types
+export interface MenuItemsResponse {
+  message: string;
+  menuItems: MenuItem[];
+}
+
+export interface MenuItemResponse {
+  message: string;
+  menuItem: MenuItem;
+}
+
+export interface CategoriesResponse {
+  message: string;
+  categories: Category[];
+}
+
+export interface CategoryResponse {
+  message: string;
+  category: Category;
+}
+
+export interface TablesResponse {
+  message: string;
+  tables: Table[];
+}
+
+export interface TableResponse {
+  message: string;
+  table: Table;
+}
+
+export interface RestaurantResponse {
+  message: string;
+  restaurant: Restaurant;
+}
+
+export interface RestaurantsResponse {
+  message: string;
+  restaurants: Restaurant[];
+}
+
+// Database Info Types
+export interface DatabaseInfo {
+  message: string;
+  counts: {
+    restaurants: number;
+    users: number;
+    categories: number;
+    menuItems: number;
+    tables: number;
+  };
+  restaurants: Array<{
+    name: string;
+    email: string;
+    logo?: string;
+  }>;
+  users: Array<{
+    name: string;
+    email: string;
+    restaurant?: string;
+  }>;
+}
+
+// Restaurant Data Types
+export interface RestaurantDataResponse {
+  message: string;
+  restaurant: Restaurant;
+  categories: Category[];
+  menuItems: MenuItem[];
+  tables: Table[];
+}
+
+// Route Information
+export interface ApiRoute {
+  method: string;
+  path: string;
+  description: string;
+}
+
+export interface ApiRoutesResponse {
+  message: string;
+  routes: ApiRoute[];
 }
