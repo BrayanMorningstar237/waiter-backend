@@ -17,7 +17,7 @@ const verifyAuth = () => {
   return token;
 };
 const deleteCategory = async (categoryId: string): Promise<any> => {
-  const response = await api.delete(`git/categories/${categoryId}`);
+  const response = await api.delete(`/categories/${categoryId}`);
   return response.data;
 };
 export const menuService = {

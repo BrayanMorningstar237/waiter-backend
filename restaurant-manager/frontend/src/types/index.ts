@@ -62,6 +62,18 @@ export interface Category {
   sortOrder: number;
   isPredefined?: boolean; // Add ? to make optional
 }
+export interface MenuItemFormData {
+  name: string;
+  description: string;
+  price: number;
+  category: string;
+  ingredients: string;
+  preparationTime: number;
+  isVegetarian: boolean;
+  isVegan: boolean;
+  isGlutenFree: boolean;
+  spiceLevel: number;
+}
 
 export interface MenuItem {
   id: string;
