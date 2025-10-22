@@ -6,7 +6,7 @@ require('dotenv').config();
 
 const app = express();
 const multer = require('multer');
-
+const Order = require('./models/Order');
 // Configure multer for file uploads with custom filename
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -751,7 +751,242 @@ app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', auth, as
     });
   }
 });
+// Order Routes (protected - restaurant admin only)
+app.get('/api/orders', auth, async (req, res) => {
+  try {
+    const { status } = req.query;
+    const restaurantId = req.user.restaurant._id;
+    
+    console.log(`🔐 Fetching orders for: ${req.user.restaurant.name} (${restaurantId})`);
+    
+    let query = { restaurant: restaurantId };
+    
+    if (status && status !== 'all') {
+      query.status = status;
+    }
 
+    const orders = await Order.find(query)
+      .populate('items.menuItem', 'name description image')
+      .populate('table', 'tableNumber')
+      .populate('restaurant', 'name')
+      .sort({ createdAt: -1 });
+
+    console.log(`✅ Found ${orders.length} orders for ${req.user.restaurant.name}`);
+    
+    res.json({
+      message: 'Orders retrieved successfully',
+      orders
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch orders:', error);
+    res.status(500).json({ error: 'Failed to fetch orders', details: error.message });
+  }
+});
+
+app.get('/api/orders/:id', auth, async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      restaurant: req.user.restaurant._id
+    })
+      .populate('items.menuItem', 'name description image price ingredients')
+      .populate('table', 'tableNumber')
+      .populate('restaurant', 'name address phone');
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    res.json({
+      message: 'Order retrieved successfully',
+      order
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch order:', error);
+    res.status(500).json({ error: 'Failed to fetch order', details: error.message });
+  }
+});
+
+// Update order status
+app.put('/api/orders/:id/status', auth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const restaurantId = req.user.restaurant._id;
+
+    console.log(`🔄 Updating order ${req.params.id} status to: ${status}`);
+
+    const order = await Order.findOne({
+      _id: req.params.id,
+      restaurant: restaurantId
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // If confirming order, reduce inventory
+    if (status === 'confirmed' && order.status !== 'confirmed') {
+      await reduceInventory(order.items);
+    }
+
+    // If cancelling a confirmed order, restore inventory
+    if (status === 'cancelled' && order.status === 'confirmed') {
+      await restoreInventory(order.items);
+    }
+
+    // Update status
+    order.status = status;
+
+    // Set timestamps based on status
+    const now = new Date();
+    if (status === 'served' && !order.servedAt) {
+      order.servedAt = now;
+    }
+    if (status === 'completed' && !order.completedAt) {
+      order.completedAt = now;
+    }
+
+    const updatedOrder = await order.save();
+    
+    const populatedOrder = await Order.findById(updatedOrder._id)
+      .populate('items.menuItem', 'name description image')
+      .populate('table', 'tableNumber');
+
+    console.log(`✅ Order ${req.params.id} status updated to: ${status}`);
+    
+    res.json({
+      message: 'Order status updated successfully',
+      order: populatedOrder
+    });
+  } catch (error) {
+    console.error('❌ Failed to update order status:', error);
+    res.status(500).json({ error: 'Failed to update order status', details: error.message });
+  }
+});
+
+// Mark order as paid
+app.put('/api/orders/:id/pay', auth, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant._id;
+
+    console.log(`💳 Marking order ${req.params.id} as paid`);
+
+    const order = await Order.findOne({
+      _id: req.params.id,
+      restaurant: restaurantId
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    order.paymentStatus = 'paid';
+    order.paidAt = new Date();
+
+    const updatedOrder = await order.save();
+    
+    const populatedOrder = await Order.findById(updatedOrder._id)
+      .populate('items.menuItem', 'name description image')
+      .populate('table', 'tableNumber');
+
+    console.log(`✅ Order ${req.params.id} marked as paid`);
+    
+    res.json({
+      message: 'Order marked as paid successfully',
+      order: populatedOrder
+    });
+  } catch (error) {
+    console.error('❌ Failed to mark order as paid:', error);
+    res.status(500).json({ error: 'Failed to mark order as paid', details: error.message });
+  }
+});
+
+// Helper function to reduce inventory when order is confirmed
+async function reduceInventory(orderItems) {
+  try {
+    for (const item of orderItems) {
+      const menuItem = await MenuItem.findById(item.menuItem);
+      
+      if (menuItem && menuItem.inventory.trackInventory) {
+        const newStock = menuItem.inventory.currentStock - item.quantity;
+        
+        await MenuItem.findByIdAndUpdate(item.menuItem, {
+          'inventory.currentStock': Math.max(0, newStock)
+        });
+        
+        console.log(`📦 Reduced inventory for ${menuItem.name}: ${menuItem.inventory.currentStock} -> ${Math.max(0, newStock)}`);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error reducing inventory:', error);
+    throw error;
+  }
+}
+
+// Helper function to restore inventory when order is cancelled
+async function restoreInventory(orderItems) {
+  try {
+    for (const item of orderItems) {
+      const menuItem = await MenuItem.findById(item.menuItem);
+      
+      if (menuItem && menuItem.inventory.trackInventory) {
+        const newStock = menuItem.inventory.currentStock + item.quantity;
+        
+        await MenuItem.findByIdAndUpdate(item.menuItem, {
+          'inventory.currentStock': newStock
+        });
+        
+        console.log(`📦 Restored inventory for ${menuItem.name}: ${menuItem.inventory.currentStock} -> ${newStock}`);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error restoring inventory:', error);
+    throw error;
+  }
+}
+
+// Get order statistics for dashboard
+app.get('/api/orders/stats', auth, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant._id;
+    
+    const stats = await Order.aggregate([
+      {
+        $match: {
+          restaurant: mongoose.Types.ObjectId(restaurantId),
+          createdAt: {
+            $gte: new Date(new Date().setHours(0, 0, 0, 0)) // Today
+          }
+        }
+      },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 },
+          totalAmount: { $sum: '$totalAmount' }
+        }
+      }
+    ]);
+
+    const totalOrders = await Order.countDocuments({ restaurant: restaurantId });
+    const todayOrders = await Order.countDocuments({
+      restaurant: restaurantId,
+      createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) }
+    });
+
+    res.json({
+      message: 'Order statistics retrieved successfully',
+      stats: {
+        today: todayOrders,
+        total: totalOrders,
+        byStatus: stats
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch order statistics:', error);
+    res.status(500).json({ error: 'Failed to fetch order statistics', details: error.message });
+  }
+});
 // List all available routes
 app.get('/api', (req, res) => {
   const routes = [

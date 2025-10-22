@@ -38,6 +38,16 @@ const orderSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Table'
   },
+  customerName: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  customerPhone: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   items: [orderItemSchema],
   totalAmount: {
     type: Number,
@@ -47,6 +57,11 @@ const orderSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['pending', 'confirmed', 'preparing', 'ready', 'served', 'cancelled', 'completed'],
+    default: 'pending'
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'paid', 'refunded'],
     default: 'pending'
   },
   orderType: {
@@ -60,13 +75,16 @@ const orderSchema = new mongoose.Schema({
     default: ''
   },
   preparationTime: {
-    type: Number, // Estimated preparation time in minutes
+    type: Number,
     default: 0
   },
   servedAt: {
     type: Date
   },
   completedAt: {
+    type: Date
+  },
+  paidAt: {
     type: Date
   }
 }, {

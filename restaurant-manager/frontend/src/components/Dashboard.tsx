@@ -1,35 +1,76 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import MenuManagement from './MenuManagement';
+import OrderManagement from './OrderManagement';
+import QRCodeGenerator from './QRCodeGenerator'; 
 
 type TabType = 'dashboard' | 'menu' | 'orders' | 'qr-codes' | 'settings';
 
 const Dashboard: React.FC = () => {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [pendingOrdersCount, setPendingOrdersCount] = useState<number>(0);
+
+  // Fetch pending orders count
+  useEffect(() => {
+   // In Dashboard component
+const fetchPendingOrdersCount = async () => {
+  try {
+    const token = localStorage.getItem('token');
+    const response = await fetch('/api/orders?status=pending', {
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    // Check if response is OK
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    setPendingOrdersCount(data.orders?.length || 0);
+  } catch (error) {
+    console.error('Failed to fetch pending orders count:', error);
+    setPendingOrdersCount(0); // Set to 0 on error
+  }
+};
+
+    // Fetch count when orders tab is active or when component mounts
+    if (activeTab === 'orders' || activeTab === 'dashboard') {
+      fetchPendingOrdersCount();
+    }
+  }, [activeTab]);
 
   const tabs = [
     { id: 'dashboard' as TabType, name: 'Dashboard', icon: 'ri-dashboard-line', mobileIcon: 'ri-home-line' },
     { id: 'menu' as TabType, name: 'Menu', icon: 'ri-restaurant-line', mobileIcon: 'ri-restaurant-2-line' },
-    { id: 'orders' as TabType, name: 'Orders', icon: 'ri-shopping-cart-line', mobileIcon: 'ri-shopping-cart-2-line', badge: 5 },
+    { 
+      id: 'orders' as TabType, 
+      name: 'Orders', 
+      icon: 'ri-shopping-cart-line', 
+      mobileIcon: 'ri-shopping-cart-2-line', 
+      badge: pendingOrdersCount > 0 ? pendingOrdersCount : undefined 
+    },
     { id: 'qr-codes' as TabType, name: 'QR Codes', icon: 'ri-qr-code-line', mobileIcon: 'ri-qr-scan-2-line' },
     { id: 'settings' as TabType, name: 'Settings', icon: 'ri-settings-line', mobileIcon: 'ri-settings-4-line' },
   ];
 
   const renderContent = () => {
-    switch (activeTab) {
-      case 'menu':
-        return <MenuManagement />;
-      case 'orders':
-        return <OrdersContent />;
-      case 'qr-codes':
-        return <QRCodeContent />;
-      case 'settings':
-        return <SettingsContent />;
-      default:
-        return <DashboardContent />;
-    }
-  };
+  switch (activeTab) {
+    case 'menu':
+      return <MenuManagement />;
+    case 'orders':
+      return <OrderManagement />;
+    case 'qr-codes':
+      return <QRCodeGenerator />; // Replace QRCodeContent with QRCodeGenerator
+    case 'settings':
+      return <SettingsContent />;
+    default:
+      return <DashboardContent pendingOrdersCount={pendingOrdersCount} />;
+  }
+};
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-50 to-blue-50/30">
@@ -153,7 +194,7 @@ const Dashboard: React.FC = () => {
         </header>
 
         {/* Main Content */}
-        <main className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 pb-24 md:pb-8">
+        <main className="sm:px-6 lg:px-8  lg:py-8 pb-24 md:pb-8">
           {renderContent()}
         </main>
 
@@ -191,23 +232,36 @@ const Dashboard: React.FC = () => {
   );
 };
 
-const DashboardContent: React.FC = () => {
+// Update DashboardContent to accept props
+interface DashboardContentProps {
+  pendingOrdersCount: number;
+}
+
+const DashboardContent: React.FC<DashboardContentProps> = ({ pendingOrdersCount }) => {
   const { user } = useAuth();
 
   const stats = [
-    { label: 'Today\'s Orders', value: '28', change: '+12%', icon: 'ri-shopping-bag-line', color: 'blue', trend: 'up' },
+    { 
+      label: 'Pending Orders', 
+      value: pendingOrdersCount.toString(), 
+      change: pendingOrdersCount > 0 ? `${pendingOrdersCount} waiting` : 'No pending orders', 
+      icon: 'ri-shopping-bag-line', 
+      color: 'blue', 
+      trend: pendingOrdersCount > 0 ? 'up' : 'neutral' 
+    },
     { label: 'Revenue', value: '1,245 CFA', change: '+8%', icon: 'ri-money-dollar-circle-line', color: 'green', trend: 'up' },
     { label: 'Menu Items', value: '156', change: '+3', icon: 'ri-restaurant-line', color: 'purple', trend: 'up' },
     { label: 'Active Tables', value: '8/12', change: '67%', icon: 'ri-table-line', color: 'orange', trend: 'neutral' },
   ];
 
   const quickActions = [
-    { icon: 'ri-add-circle-line', title: 'Add Menu Item', color: 'blue', desc: 'Create new dish' },
-    { icon: 'ri-qr-code-line', title: 'Generate QR', color: 'green', desc: 'Table QR codes' },
-    { icon: 'ri-file-list-line', title: 'View Orders', color: 'purple', desc: 'Manage orders' },
-    { icon: 'ri-settings-3-line', title: 'Settings', color: 'orange', desc: 'Configure app' },
+    { icon: 'ri-add-circle-line', title: 'Add Menu Item', color: 'blue', desc: 'Create new dish', action: 'menu' },
+    { icon: 'ri-qr-code-line', title: 'Generate QR', color: 'green', desc: 'Table QR codes', action: 'qr-codes' },
+    { icon: 'ri-file-list-line', title: 'View Orders', color: 'purple', desc: 'Manage orders', action: 'orders' },
+    { icon: 'ri-settings-3-line', title: 'Settings', color: 'orange', desc: 'Configure app', action: 'settings' },
   ];
 
+  // You can replace this with real data from your API
   const recentOrders = [
     { id: '#1234', table: 'Table 5', items: '3 items', total: '$45.50', status: 'preparing', time: '5 min ago' },
     { id: '#1233', table: 'Table 2', items: '2 items', total: '$28.00', status: 'ready', time: '12 min ago' },
@@ -232,7 +286,9 @@ const DashboardContent: React.FC = () => {
               Welcome back, {user?.name}! 👋
             </h2>
             <p className="text-green-100 text-sm md:text-base max-w-md">
-              Your restaurant is performing great today. Keep up the excellent work!
+              {pendingOrdersCount > 0 
+                ? `You have ${pendingOrdersCount} pending order${pendingOrdersCount > 1 ? 's' : ''} waiting for confirmation.` 
+                : 'Your restaurant is performing great today. Keep up the excellent work!'}
             </p>
           </div>
           <div className="hidden sm:block text-6xl md:text-7xl opacity-20">
@@ -368,13 +424,8 @@ const DashboardContent: React.FC = () => {
   );
 };
 
-const OrdersContent: React.FC = () => (
-  <Placeholder icon="ri-shopping-cart-line" color="blue" title="Orders" />
-);
 
-const QRCodeContent: React.FC = () => (
-  <Placeholder icon="ri-qr-code-line" color="purple" title="QR Code Generator" />
-);
+
 
 const SettingsContent: React.FC = () => (
   <Placeholder icon="ri-settings-line" color="orange" title="Settings" />

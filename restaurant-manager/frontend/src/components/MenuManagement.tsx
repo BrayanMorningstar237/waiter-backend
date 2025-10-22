@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { menuService } from '../services/menu';
 import type { MenuItem, Category, CreateMenuItemData, UpdateMenuItemData ,MenuItemFormData} from '../types';
+import { useToast } from '../contexts/ToastContext';
 
 const MenuManagement: React.FC = () => {
   const { user } = useAuth();
+  const { showSuccess, showError } = useToast();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,13 +24,12 @@ const MenuManagement: React.FC = () => {
 
   const loadMenuData = async () => {
     if (!user) {
-      console.error('No user found');
+      showError('No user found');
       return;
     }
     
     try {
       setLoading(true);
-      console.log('🔐 Loading menu data for authenticated user:', user.name);
       
       const [menuResponse, categoriesResponse] = await Promise.all([
         menuService.getMenuItems(),
@@ -55,11 +56,10 @@ const MenuManagement: React.FC = () => {
       setMenuItems(menuItems);
       setCategories(categories);
     } catch (error: any) {
-      console.error('❌ Failed to load menu data:', error);
       if (error.response?.status === 401) {
-        alert('Authentication failed. Please log in again.');
+        showError('Authentication failed. Please log in again.');
       } else {
-        alert(`Failed to load menu data: ${error.response?.data?.error || error.message}`);
+        showError(`Failed to load menu data: ${error.response?.data?.error || error.message}`);
       }
     } finally {
       setLoading(false);
@@ -79,7 +79,7 @@ const MenuManagement: React.FC = () => {
 
   const handleAddItem = async (data: CreateMenuItemData, imageFile?: File) => {
     if (!user?.restaurant?.id) {
-      alert('No restaurant ID found');
+      showError('No restaurant ID found');
       return;
     }
 
@@ -94,16 +94,15 @@ const MenuManagement: React.FC = () => {
       await loadMenuData();
       setShowAddModal(false);
       setTempFormData(null);
-      alert('Menu item created successfully!');
+      showSuccess('Menu item created successfully!');
     } catch (error: any) {
-      console.error('Failed to create menu item:', error);
-      alert(`Failed to create menu item: ${error.response?.data?.error || error.message}`);
+      showError(`Failed to create menu item: ${error.response?.data?.error || error.message}`);
     }
   };
 
   const handleEditItem = async (id: string, data: Partial<MenuItem>, imageFile?: File) => {
     if (!id || id === 'undefined') {
-      alert('Cannot edit item: ID is missing or invalid');
+      showError('Cannot edit item: ID is missing or invalid');
       return;
     }
 
@@ -117,16 +116,15 @@ const MenuManagement: React.FC = () => {
       await loadMenuData();
       setEditingItem(null);
       setTempFormData(null);
-      alert('Menu item updated successfully!');
+      showSuccess('Menu item updated successfully!');
     } catch (error: any) {
-      console.error('Failed to update menu item:', error);
-      alert(`Failed to update menu item: ${error.response?.data?.error || error.message}`);
+      showError(`Failed to update menu item: ${error.response?.data?.error || error.message}`);
     }
   };
 
   const handleDeleteItem = async (id: string) => {
     if (!id || id === 'undefined') {
-      alert('Cannot delete item: ID is missing or invalid');
+      showError('Cannot delete item: ID is missing or invalid');
       return;
     }
 
@@ -135,10 +133,9 @@ const MenuManagement: React.FC = () => {
     try {
       await menuService.deleteMenuItem(id);
       await loadMenuData();
-      alert('Menu item deleted successfully!');
+      showSuccess('Menu item deleted successfully!');
     } catch (error: any) {
-      console.error('Failed to delete menu item:', error);
-      alert(`Failed to delete menu item: ${error.response?.data?.error || error.message}`);
+      showError(`Failed to delete menu item: ${error.response?.data?.error || error.message}`);
     }
   };
 
@@ -149,7 +146,7 @@ const MenuManagement: React.FC = () => {
 
   const handleCreateCategory = async (categoryName: string) => {
     if (!user?.restaurant?.id) {
-      alert('No restaurant ID found');
+      showError('No restaurant ID found');
       return;
     }
 
@@ -164,10 +161,10 @@ const MenuManagement: React.FC = () => {
 
       const response = await menuService.createCategory(newCategory);
       await loadMenuData();
+      showSuccess('Category created successfully!');
       return response.category || response.data;
     } catch (error: any) {
-      console.error('Failed to create category:', error);
-      alert(`Failed to create category: ${error.response?.data?.error || error.message}`);
+      showError(`Failed to create category: ${error.response?.data?.error || error.message}`);
       throw error;
     }
   };
@@ -181,14 +178,13 @@ const MenuManagement: React.FC = () => {
       setDeletingCategoryId(categoryId);
       await menuService.deleteCategory(categoryId);
       await loadMenuData();
-      alert('Category deleted successfully!');
+      showSuccess('Category deleted successfully!');
     } catch (error: any) {
-      console.error('❌ Failed to delete category:', error);
       const errorMessage = error.response?.data?.error || error.message;
       if (error.response?.status === 403) {
-        alert('Cannot delete predefined categories. You can only delete categories you created.');
+        showError('Cannot delete predefined categories. You can only delete categories you created.');
       } else {
-        alert(`Failed to delete category: ${errorMessage}`);
+        showError(`Failed to delete category: ${errorMessage}`);
       }
     } finally {
       setDeletingCategoryId(null);
@@ -207,7 +203,7 @@ const MenuManagement: React.FC = () => {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+    <div className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-2  space-y-6">
 
   {/* Header */}
   <div className="bg-gradient-to-r from-green-600 via-green-500 to-green-600 rounded-2xl sm:rounded-3xl overflow-hidden">
@@ -219,12 +215,12 @@ const MenuManagement: React.FC = () => {
           Menu Management
         </h1>
         <p className="text-blue-100 text-sm sm:text-base lg:text-lg">
-          Manage your restaurant menu items & categories
+          Manage your menu items & categories
         </p>
       </div>
 
       {/* Action Buttons */}
-      <div className="flex text-right gap-2 sm:gap-3">
+      <div className="flex justify-end w-full lg:w-auto gap-2 sm:gap-3">
         <button
           onClick={() => setShowCategoryManagement(true)}
           className="group relative w-12 h-12 sm:w-
@@ -252,87 +248,87 @@ const MenuManagement: React.FC = () => {
   </div>
 
   {/* Search & Filter Section */}
-  <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-lg border border-gray-100">
-    <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-center">
-      {/* Search Input */}
-      <div className="flex-1 w-full">
-        <div className="relative group">
-          <i className="ri-search-line absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 group-hover:text-blue-500 text-lg sm:text-xl transition-colors"></i>
-          <input
-            type="text"
-            placeholder="Search menu items by name or description..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-12 sm:pl-14 pr-4 py-3 sm:py-4 lg:py-5 border-2 border-gray-200 rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-sm sm:text-base lg:text-lg transition-all duration-300 hover:border-gray-300"
-          />
-        </div>
-      </div>
-
-      {/* Category Filter */}
-      <div className="w-full lg:w-64">
-        <select
-          value={selectedCategory}
-          onChange={(e) => setSelectedCategory(e.target.value)}
-          className="w-full px-4 py-3 sm:py-4 lg:py-5 border-2 border-gray-200 rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-sm sm:text-base lg:text-lg transition-all duration-300 bg-white hover:border-gray-300 cursor-pointer"
-        >
-          <option value="all">All Categories</option>
-          {categories.map(category => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
+ <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-lg border border-gray-100">
+  <div className="flex gap-4 items-stretch">
+    {/* Search Input */}
+    <div className="flex-1 w-full">
+      <div className="relative group">
+        <i className="ri-search-line absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 group-hover:text-blue-500 text-lg sm:text-xl transition-colors"></i>
+        <input
+          type="text"
+          placeholder="Search menu items by name or description..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full pl-12 sm:pl-14 pr-4 py-3 sm:py-4 lg:py-5 border-2 border-gray-200 rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-sm sm:text-base lg:text-lg transition-all duration-300 hover:border-gray-300"
+        />
       </div>
     </div>
 
-    {/* Search Results Info */}
-    {(searchTerm || selectedCategory !== 'all') && (
-      <div className="mt-4 sm:mt-6 p-4 sm:p-5 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border-2 border-blue-200 rounded-xl sm:rounded-2xl shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center space-x-2 text-blue-800">
-            <i className="ri-information-line text-xl sm:text-2xl"></i>
-            <span className="font-bold text-sm sm:text-base lg:text-lg">Search Results</span>
-          </div>
-          <div className="flex flex-wrap gap-2 text-xs sm:text-sm">
-            {searchTerm && (
-              <span className="bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-blue-200 text-blue-700 font-medium">
-                Search: "{searchTerm}"
-              </span>
-            )}
-            {selectedCategory !== 'all' && (
-              <span className="bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-blue-200 text-blue-700 font-medium">
-                Category: {categories.find(c => c.id === selectedCategory)?.name}
-              </span>
-            )}
-            <span className="bg-blue-500 text-white px-3 py-1.5 rounded-full font-bold shadow-md">
-              {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''} found
+    {/* Category Filter */}
+    <div className="w-1/3">
+      <select
+        value={selectedCategory}
+        onChange={(e) => setSelectedCategory(e.target.value)}
+        className="w-full px-4 py-3 sm:py-4 lg:py-5 border-2 border-gray-200 rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-sm sm:text-base lg:text-lg transition-all duration-300 bg-white hover:border-gray-300 cursor-pointer"
+      >
+        <option value="all">All Categories</option>
+        {categories.map(category => (
+          <option key={category.id} value={category.id}>
+            {category.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  </div>
+
+  {/* Search Results Info */}
+  {(searchTerm || selectedCategory !== 'all') && (
+    <div className="mt-4 sm:mt-6 p-4 sm:p-5 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border-2 border-blue-200 rounded-xl sm:rounded-2xl shadow-sm">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center space-x-2 text-blue-800">
+          <i className="ri-information-line text-xl sm:text-2xl"></i>
+          <span className="font-bold text-sm sm:text-base lg:text-lg">Search Results</span>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs sm:text-sm">
+          {searchTerm && (
+            <span className="bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-blue-200 text-blue-700 font-medium">
+              Search: "{searchTerm}"
             </span>
-          </div>
+          )}
+          {selectedCategory !== 'all' && (
+            <span className="bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-blue-200 text-blue-700 font-medium">
+              Category: {categories.find(c => c.id === selectedCategory)?.name}
+            </span>
+          )}
+          <span className="bg-blue-500 text-white px-3 py-1.5 rounded-full font-bold shadow-md">
+            {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''} found
+          </span>
         </div>
       </div>
-    )}
-  </div>
+    </div>
+  )}
+</div>
 
    {/* Stats Cards */}
-<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-  <div className="bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-gray-200/50 text-center">
-    <div className="text-xl sm:text-2xl font-bold text-green-600 mb-1">{menuItems.length}</div>
-    <div className="text-gray-600 text-xs sm:text-sm">Total Items</div>
+<div className="flex overflow-x-auto gap-3 p-2">
+  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+    <div className="text-xl font-bold text-green-600 mb-1">{menuItems.length}</div>
+    <div className="text-gray-600 text-sm">Total Items</div>
   </div>
 
-  <div className="bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-gray-200/50 text-center">
-    <div className="text-xl sm:text-2xl font-bold text-blue-600 mb-1">{categories.length}</div>
-    <div className="text-gray-600 text-xs sm:text-sm">Categories</div>
+  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+    <div className="text-xl font-bold text-blue-600 mb-1">{categories.length}</div>
+    <div className="text-gray-600 text-sm">Categories</div>
   </div>
 
-  <div className="bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-gray-200/50 text-center">
-    <div className="text-xl sm:text-2xl font-bold text-purple-600 mb-1">{userCategories.length}</div>
-    <div className="text-gray-600 text-xs sm:text-sm">Custom Categories</div>
+  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+    <div className="text-xl font-bold text-purple-600 mb-1">{userCategories.length}</div>
+    <div className="text-gray-600 text-sm">Custom Categories</div>
   </div>
 
-  <div className="bg-white rounded-xl p-3 sm:p-4 shadow-sm border border-gray-200/50 text-center">
-    <div className="text-xl sm:text-2xl font-bold text-orange-600 mb-1">{predefinedCategories.length}</div>
-    <div className="text-gray-600 text-xs sm:text-sm">System Categories</div>
+  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+    <div className="text-xl font-bold text-orange-600 mb-1">{predefinedCategories.length}</div>
+    <div className="text-gray-600 text-sm">System Categories</div>
   </div>
 </div>
 
@@ -613,7 +609,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
       setShowAddCategory(false);
     }
   } catch (error) {
-    console.error('Failed to create category:', error);
+    // Error handling is done in the parent component
   } finally {
     setCreatingCategory(false);
   }
@@ -645,7 +641,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
       }, imageFile || undefined);
     }
   } catch (error) {
-    console.error('Error submitting form:', error);
+    // Error handling is done in the parent component
   } finally {
     setUploading(false);
   }
@@ -1030,7 +1026,7 @@ const CategoryManagementModal: React.FC<CategoryManagementModalProps> = ({
       setNewCategoryName('');
       setShowAddCategory(false);
     } catch (error) {
-      console.error('Failed to create category:', error);
+      // Error handling is done in the parent component
     } finally {
       setCreatingCategory(false);
     }

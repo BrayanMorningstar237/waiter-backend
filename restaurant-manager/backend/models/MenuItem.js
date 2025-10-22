@@ -66,7 +66,20 @@ const menuItemSchema = new mongoose.Schema({
   sortOrder: {
     type: Number,
     default: 0
-  }
+  },inventory: {
+    currentStock: {
+      type: Number,
+      default: 0
+    },
+    lowStockThreshold: {
+      type: Number,
+      default: 10
+    },
+    trackInventory: {
+      type: Boolean,
+      default: false
+    }
+  },
 }, {
   timestamps: true
 });
