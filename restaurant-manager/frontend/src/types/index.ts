@@ -19,6 +19,10 @@ export interface User {
   email: string;
   role: 'admin' | 'staff';
   restaurant: Restaurant;
+  phone?: string; // Added phone field
+  isActive?: boolean; // Added isActive field
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Restaurant {
@@ -31,16 +35,103 @@ export interface Restaurant {
     city: string;
     state: string;
     zipCode: string;
+    country?: string; // Added country field
   };
   contact?: {
     phone: string;
     email: string;
+    website?: string; // Added website field
   };
   theme?: {
     primaryColor: string;
     secondaryColor: string;
+    backgroundColor?: string; // Added for theme settings
+    textColor?: string; // Added for theme settings
+    accentColor?: string; // Added for theme settings
   };
+  operatingHours?: { // Added operating hours
+    monday: { open: string; close: string };
+    tuesday: { open: string; close: string };
+    wednesday: { open: string; close: string };
+    thursday: { open: string; close: string };
+    friday: { open: string; close: string };
+    saturday: { open: string; close: string };
+    sunday: { open: string; close: string };
+  };
+  isActive?: boolean; // Added isActive field
+  createdAt?: string;
+  updatedAt?: string;
 }
+
+// Settings Types - ADD THESE NEW INTERFACES
+export interface RestaurantSettings {
+  name: string;
+  description?: string;
+  contact: {
+    phone?: string;
+    email?: string;
+    website?: string;
+  };
+  address: {
+    street?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    country?: string;
+  };
+  operatingHours?: {
+    monday: { open: string; close: string };
+    tuesday: { open: string; close: string };
+    wednesday: { open: string; close: string };
+    thursday: { open: string; close: string };
+    friday: { open: string; close: string };
+    saturday: { open: string; close: string };
+    sunday: { open: string; close: string };
+  };
+  logo?: string;
+  theme?: RestaurantTheme;
+  isActive?: boolean;
+}
+
+export interface AdminSettings {
+  email: string;
+  phone?: string;
+  currentPassword?: string;
+  newPassword?: string;
+  confirmPassword?: string;
+}
+
+export interface RestaurantTheme {
+  primaryColor: string;
+  secondaryColor: string;
+  backgroundColor?: string;
+  textColor?: string;
+  accentColor?: string;
+}
+
+export const defaultThemes: RestaurantTheme[] = [
+  {
+    primaryColor: '#3B82F6',
+    secondaryColor: '#1E40AF',
+    backgroundColor: '#FFFFFF',
+    textColor: '#1F2937',
+    accentColor: '#10B981'
+  },
+  {
+    primaryColor: '#EF4444',
+    secondaryColor: '#DC2626',
+    backgroundColor: '#FFFFFF',
+    textColor: '#1F2937',
+    accentColor: '#F59E0B'
+  },
+  {
+    primaryColor: '#8B5CF6',
+    secondaryColor: '#7C3AED',
+    backgroundColor: '#FFFFFF',
+    textColor: '#1F2937',
+    accentColor: '#EC4899'
+  }
+];
 
 export interface LoginCredentials {
   email: string;
@@ -57,11 +148,12 @@ export interface AuthResponse {
 export interface Category {
   id: string;
   name: string;
-  description?: string; // Add ? to make optional
+  description?: string;
   restaurant: string;
   sortOrder: number;
-  isPredefined?: boolean; // Add ? to make optional
+  isPredefined?: boolean;
 }
+
 export interface MenuItemFormData {
   name: string;
   description: string;
@@ -114,7 +206,7 @@ export interface UpdateMenuItemData {
   name?: string;
   description?: string;
   price?: number;
-  category?: string; // Only string, not Category object
+  category?: string;
   ingredients?: string[];
   preparationTime?: number;
   isVegetarian?: boolean;

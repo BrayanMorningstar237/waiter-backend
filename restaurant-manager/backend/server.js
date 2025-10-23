@@ -2,59 +2,95 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
+const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 const app = express();
 const multer = require('multer');
 const Order = require('./models/Order');
-// Configure multer for file uploads with custom filename
-const storage = multer.diskStorage({
+const Restaurant = require('./models/Restaurant');
+const User = require('./models/User');
+const Category = require('./models/Category');
+const MenuItem = require('./models/MenuItem');
+const Table = require('./models/Table');
+
+// Configure multer for menu item images
+const menuItemStorage = multer.diskStorage({
   destination: function (req, file, cb) {
     cb(null, path.join(__dirname, '../frontend/public/images/menu-items'));
   },
   filename: function (req, file, cb) {
-    // Get current date and time for unique identifier
     const now = new Date();
     const dateTime = now.toISOString()
-      .replace(/:/g, '-')  // Replace colons with dashes for filename compatibility
-      .replace(/\..+/, ''); // Remove milliseconds
+      .replace(/:/g, '-')
+      .replace(/\..+/, '');
     
-    // Extract restaurant name and menu item name from request
     let restaurantName = 'restaurant';
     let menuItemName = 'item';
     
-    // Try to get restaurant name from authenticated user
     if (req.user && req.user.restaurant && req.user.restaurant.name) {
       restaurantName = req.user.restaurant.name
         .toLowerCase()
-        .replace(/\s+/g, '-')  // Replace spaces with dashes
-        .replace(/[^a-z0-9-]/g, ''); // Remove special characters
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '');
     }
     
-    // Try to get menu item name from request body
     if (req.body && req.body.name) {
       menuItemName = req.body.name
         .toLowerCase()
-        .replace(/\s+/g, '-')  // Replace spaces with dashes
-        .replace(/[^a-z0-9-]/g, ''); // Remove special characters
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '');
     }
     
-    // Create unique filename with restaurant name, item name, and timestamp
     const uniqueFilename = `${restaurantName}-${menuItemName}-${dateTime}${path.extname(file.originalname)}`;
     
     console.log(`📸 Saving image as: ${uniqueFilename}`);
-    console.log(`🏪 Restaurant: ${restaurantName}`);
-    console.log(`🍽️ Menu item: ${menuItemName}`);
-    console.log(`🕐 Timestamp: ${dateTime}`);
-    
     cb(null, uniqueFilename);
   }
 });
 
-const upload = multer({
-  storage: storage,
+// Configure multer for restaurant logos
+const logoStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, path.join(__dirname, '../frontend/public/images/restaurant-logos'));
+  },
+  filename: function (req, file, cb) {
+    const now = new Date();
+    const dateTime = now.toISOString().replace(/:/g, '-').replace(/\..+/, '');
+    
+    let restaurantName = 'restaurant';
+    if (req.user && req.user.restaurant && req.user.restaurant.name) {
+      restaurantName = req.user.restaurant.name
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '');
+    }
+    
+    const uniqueFilename = `logo-${restaurantName}-${dateTime}${path.extname(file.originalname)}`;
+    
+    console.log(`🖼️ Saving logo as: ${uniqueFilename}`);
+    cb(null, uniqueFilename);
+  }
+});
+
+const menuItemUpload = multer({
+  storage: menuItemStorage,
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: function (req, file, cb) {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'), false);
+    }
+  }
+});
+
+const logoUpload = multer({
+  storage: logoStorage,
+  limits: {
+    fileSize: 2 * 1024 * 1024 // 2MB limit for logos
   },
   fileFilter: function (req, file, cb) {
     if (file.mimetype.startsWith('image/')) {
@@ -91,18 +127,11 @@ mongoose.connect(process.env.MONGODB_URI)
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-fallback-secret-key-change-in-production';
 
-// Routes
-app.use('/api/auth', require('./routes/auth'));
-
-// Import models for API routes
-const Restaurant = require('./models/Restaurant');
-const User = require('./models/user');
-const Category = require('./models/Category');
-const MenuItem = require('./models/MenuItem');
-const Table = require('./models/Table');
-
 // Import middleware
 const { auth } = require('./middleware/auth');
+
+// Routes
+app.use('/api/auth', require('./routes/auth'));
 
 // Test Routes
 app.get('/api/test', (req, res) => {
@@ -121,7 +150,166 @@ app.get('/api/test-db', async (req, res) => {
   }
 });
 
-// Restaurant Routes (public - for landing pages, etc.)
+// ============================================================================
+// RESTAURANT SETTINGS ENDPOINTS
+// ============================================================================
+
+// Get current restaurant (protected)
+app.get('/api/restaurants/current', auth, async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findById(req.user.restaurant._id);
+    
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    res.json({
+      message: 'Restaurant retrieved successfully',
+      restaurant
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurant:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant', details: error.message });
+  }
+});
+
+// Update current restaurant (protected)
+app.put('/api/restaurants/current', auth, async (req, res) => {
+  try {
+    console.log('🏪 Updating restaurant:', req.user.restaurant.name);
+    console.log('📝 Update data:', req.body);
+
+    const restaurant = await Restaurant.findByIdAndUpdate(
+      req.user.restaurant._id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    console.log('✅ Restaurant updated successfully:', restaurant.name);
+    
+    res.json({
+      message: 'Restaurant updated successfully',
+      restaurant
+    });
+  } catch (error) {
+    console.error('❌ Failed to update restaurant:', error);
+    res.status(500).json({ error: 'Failed to update restaurant', details: error.message });
+  }
+});
+
+// Update restaurant logo (protected)
+app.put('/api/restaurants/current/logo', auth, logoUpload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No logo file provided' });
+    }
+
+    console.log('🖼️ Updating restaurant logo for:', req.user.restaurant.name);
+    console.log('📸 Logo file:', req.file.filename);
+
+    const logoPath = `/images/restaurant-logos/${req.file.filename}`;
+    
+    const restaurant = await Restaurant.findByIdAndUpdate(
+      req.user.restaurant._id,
+      { logo: logoPath },
+      { new: true }
+    );
+
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    console.log('✅ Restaurant logo updated successfully');
+    
+    res.json({
+      message: 'Restaurant logo updated successfully',
+      restaurant
+    });
+  } catch (error) {
+    console.error('❌ Failed to update restaurant logo:', error);
+    res.status(500).json({ error: 'Failed to update restaurant logo', details: error.message });
+  }
+});
+
+// ============================================================================
+// USER PROFILE ENDPOINTS
+// ============================================================================
+
+// Get current user profile (protected)
+app.get('/api/users/current', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .select('-password -__v')
+      .populate('restaurant', 'name description contact address theme logo');
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      message: 'User profile retrieved successfully',
+      user
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch user profile:', error);
+    res.status(500).json({ error: 'Failed to fetch user profile', details: error.message });
+  }
+});
+
+// Update current user profile (protected)
+app.put('/api/users/current', auth, async (req, res) => {
+  try {
+    console.log('👤 Updating user profile:', req.user.email);
+    console.log('📝 Update data:', req.body);
+
+    const { currentPassword, newPassword, ...updateData } = req.body || {};
+    // If password change is requested
+    if (currentPassword && newPassword) {
+      const user = await User.findById(req.user._id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Verify current password
+      const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+      if (!isPasswordValid) {
+        return res.status(400).json({ error: 'Current password is incorrect' });
+      }
+
+      // Hash new password
+      updateData.password = await bcrypt.hash(newPassword, 10);
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password -__v').populate('restaurant', 'name description contact address theme logo');
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    console.log('✅ User profile updated successfully');
+    
+    res.json({
+      message: 'User profile updated successfully',
+      user
+    });
+  } catch (error) {
+    console.error('❌ Failed to update user profile:', error);
+    res.status(500).json({ error: 'Failed to update user profile', details: error.message });
+  }
+});
+
+// ============================================================================
+// EXISTING RESTAURANT ROUTES (public - for landing pages, etc.)
+// ============================================================================
+
 app.get('/api/restaurants', async (req, res) => {
   try {
     const restaurants = await Restaurant.find().select('-__v');
@@ -149,15 +337,18 @@ app.get('/api/restaurants/:id', async (req, res) => {
   }
 });
 
-// ✅ CORRECTED: Menu Items Routes with proper restaurant filtering
+// ============================================================================
+// MENU ITEMS ROUTES
+// ============================================================================
+
 app.get('/api/menu-items', auth, async (req, res) => {
   try {
     const { categoryId } = req.query;
-    const restaurantId = req.user.restaurant._id; // Get from authenticated user
+    const restaurantId = req.user.restaurant._id;
     
     console.log(`🔐 Fetching menu items for: ${req.user.restaurant.name} (${restaurantId})`);
     
-    let query = { restaurant: restaurantId }; // Filter by user's restaurant ONLY
+    let query = { restaurant: restaurantId };
     
     if (categoryId) query.category = categoryId;
 
@@ -197,299 +388,8 @@ app.get('/api/menu-items/:id', async (req, res) => {
   }
 });
 
-// ✅ CORRECTED: Categories Routes with proper restaurant filtering
-app.get('/api/categories', auth, async (req, res) => {
-  try {
-    const restaurantId = req.user.restaurant._id; // Get from authenticated user
-    
-    console.log(`🔐 Fetching categories for: ${req.user.restaurant.name} (${restaurantId})`);
-    
-    const categories = await Category.find({ restaurant: restaurantId })
-      .populate('restaurant', 'name')
-      .select('-__v')
-      .sort('sortOrder');
-
-    console.log(`✅ Found ${categories.length} categories for ${req.user.restaurant.name}`);
-    
-    res.json({
-      message: 'Categories retrieved successfully',
-      categories
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch categories:', error);
-    res.status(500).json({ error: 'Failed to fetch categories', details: error.message });
-  }
-});
-// Create category (protected)
-app.post('/api/categories', auth, async (req, res) => {
-  try {
-    console.log('📁 Creating new category for restaurant:', req.user.restaurant.name);
-    console.log('📝 Category data:', req.body);
-    
-    const categoryData = {
-      ...req.body,
-      restaurant: req.user.restaurant._id, // Set restaurant from authenticated user
-      isPredefined: false // User-created categories are not predefined
-    };
-
-    const category = new Category(categoryData);
-    const savedCategory = await category.save();
-    
-    const populatedCategory = await Category.findById(savedCategory._id)
-      .populate('restaurant', 'name');
-
-    console.log('✅ Category created successfully:', populatedCategory.name);
-    
-    res.status(201).json({
-      message: 'Category created successfully',
-      category: populatedCategory
-    });
-  } catch (error) {
-    console.error('❌ Failed to create category:', error);
-    res.status(500).json({ error: 'Failed to create category', details: error.message });
-  }
-});
-app.delete('/api/categories/:id', auth, async (req, res) => {
-  try {
-    console.log('🗑️ Attempting to delete category:', req.params.id);
-    console.log('🏪 Restaurant:', req.user.restaurant.name);
-    console.log('👤 User:', req.user.email);
-
-    // Find the category first to check ownership and predefined status
-    const category = await Category.findOne({
-      _id: req.params.id,
-      restaurant: req.user.restaurant._id // Ensure category belongs to user's restaurant
-    });
-
-    if (!category) {
-      console.log('❌ Category not found or does not belong to restaurant');
-      return res.status(404).json({ error: 'Category not found' });
-    }
-
-    // Check if category is predefined
-    if (category.isPredefined) {
-      console.log('❌ Cannot delete predefined category:', category.name);
-      return res.status(403).json({ 
-        error: 'Cannot delete predefined categories. You can only delete categories you created.' 
-      });
-    }
-
-    // Delete the category (only if it's not predefined and belongs to user's restaurant)
-    await Category.findByIdAndDelete(req.params.id);
-    
-    console.log('✅ Category deleted successfully:', category.name);
-    
-    res.json({
-      message: 'Category deleted successfully',
-      deletedCategory: {
-        id: category._id,
-        name: category.name
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to delete category:', error);
-    
-    // Handle specific MongoDB errors
-    if (error.name === 'CastError') {
-      return res.status(400).json({ error: 'Invalid category ID' });
-    }
-    
-    res.status(500).json({ error: 'Failed to delete category', details: error.message });
-  }
-});
-// Tables Routes (public - for QR code scanning, etc.)
-app.get('/api/tables', async (req, res) => {
-  try {
-    const { restaurantId } = req.query;
-    let query = {};
-    
-    if (restaurantId) query.restaurant = restaurantId;
-
-    const tables = await Table.find(query)
-      .populate('restaurant', 'name')
-      .select('-__v')
-      .sort('tableNumber');
-
-    res.json({
-      message: 'Tables retrieved successfully',
-      tables
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch tables', details: error.message });
-  }
-});
-
-// Database Info Route
-app.get('/api/db-info', async (req, res) => {
-  try {
-    const [restaurants, users, categories, menuItems, tables] = await Promise.all([
-      Restaurant.countDocuments(),
-      User.countDocuments(),
-      Category.countDocuments(),
-      MenuItem.countDocuments(),
-      Table.countDocuments()
-    ]);
-
-    const restaurantList = await Restaurant.find().select('name email logo');
-    const userList = await User.find().select('name email restaurant').populate('restaurant', 'name');
-
-    res.json({
-      message: 'Database information',
-      counts: {
-        restaurants,
-        users,
-        categories,
-        menuItems,
-        tables
-      },
-      restaurants: restaurantList,
-      users: userList.map(user => ({
-        name: user.name,
-        email: user.email,
-        restaurant: user.restaurant?.name
-      }))
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to get database info', details: error.message });
-  }
-});
-
-// Restaurant-specific data route
-app.get('/api/restaurant-data/:restaurantId', async (req, res) => {
-  try {
-    const { restaurantId } = req.params;
-
-    const [restaurant, categories, menuItems, tables] = await Promise.all([
-      Restaurant.findById(restaurantId),
-      Category.find({ restaurant: restaurantId }).sort('sortOrder'),
-      MenuItem.find({ restaurant: restaurantId })
-        .populate('category', 'name')
-        .sort('name'),
-      Table.find({ restaurant: restaurantId }).sort('tableNumber')
-    ]);
-
-    if (!restaurant) {
-      return res.status(404).json({ error: 'Restaurant not found' });
-    }
-
-    res.json({
-      message: 'Restaurant data retrieved successfully',
-      restaurant,
-      categories,
-      menuItems,
-      tables
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch restaurant data', details: error.message });
-  }
-});
-
-// Seed data route
-app.get('/api/seed-data', async (req, res) => {
-  try {
-    const { exec } = require('child_process');
-    const { promisify } = require('util');
-    const execAsync = promisify(exec);
-
-    const { stdout, stderr } = await execAsync('npm run seed');
-    
-    res.json({ 
-      message: 'Database seeded successfully!',
-      output: stdout,
-      error: stderr
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      error: 'Seeding failed', 
-      details: error.message,
-      stdout: error.stdout,
-      stderr: error.stderr
-    });
-  }
-});
-
-// Protected route example
-app.get('/api/protected-test', auth, (req, res) => {
-  res.json({ 
-    message: 'This is a protected route!',
-    user: {
-      id: req.user._id,
-      name: req.user.name,
-      email: req.user.email,
-      restaurant: req.user.restaurant
-    }
-  });
-});
-
-// User's restaurant data (protected)
-app.get('/api/my-restaurant', auth, async (req, res) => {
-  try {
-    const restaurantId = req.user.restaurant._id;
-
-    const [restaurant, categories, menuItems, tables] = await Promise.all([
-      Restaurant.findById(restaurantId),
-      Category.find({ restaurant: restaurantId }).sort('sortOrder'),
-      MenuItem.find({ restaurant: restaurantId })
-        .populate('category', 'name')
-        .sort('category name'),
-      Table.find({ restaurant: restaurantId }).sort('tableNumber')
-    ]);
-
-    res.json({
-      message: 'Restaurant data retrieved successfully',
-      restaurant,
-      categories,
-      menuItems,
-      tables
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch restaurant data', details: error.message });
-  }
-});
-
-// Debug route to check menu item ownership
-app.get('/api/debug/menu-items-ownership', auth, async (req, res) => {
-  try {
-    const userRestaurantId = req.user.restaurant._id.toString();
-    
-    // Get all menu items with their restaurant info
-    const allItems = await MenuItem.find()
-      .populate('restaurant', 'name _id')
-      .select('name restaurant');
-    
-    // Count items per restaurant
-    const itemsByRestaurant = {};
-    allItems.forEach(item => {
-      const restId = item.restaurant._id.toString();
-      const restName = item.restaurant.name;
-      
-      if (!itemsByRestaurant[restId]) {
-        itemsByRestaurant[restId] = {
-          restaurantName: restName,
-          count: 0,
-          items: []
-        };
-      }
-      
-      itemsByRestaurant[restId].count++;
-      itemsByRestaurant[restId].items.push(item.name);
-    });
-    
-    res.json({
-      userRestaurant: {
-        id: userRestaurantId,
-        name: req.user.restaurant.name
-      },
-      itemsByRestaurant,
-      totalItems: allItems.length
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Debug failed', details: error.message });
-  }
-});
-
 // Create menu item (protected)
-app.post('/api/menu-items', auth, upload.single('image'), async (req, res) => {
+app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
     console.log('📦 Creating menu item with data:', req.body);
     console.log('🏪 Restaurant:', req.user.restaurant.name);
@@ -497,7 +397,7 @@ app.post('/api/menu-items', auth, upload.single('image'), async (req, res) => {
     
     const menuItemData = {
       ...req.body,
-      restaurant: req.user.restaurant._id, // Set restaurant from authenticated user
+      restaurant: req.user.restaurant._id,
       ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
       price: Number(req.body.price),
       preparationTime: Number(req.body.preparationTime),
@@ -508,7 +408,6 @@ app.post('/api/menu-items', auth, upload.single('image'), async (req, res) => {
       isAvailable: req.body.isAvailable === 'true'
     };
 
-    // If image was uploaded, add the image path
     if (req.file) {
       menuItemData.image = `/images/menu-items/${req.file.filename}`;
       console.log('📸 Image saved:', req.file.filename);
@@ -534,9 +433,8 @@ app.post('/api/menu-items', auth, upload.single('image'), async (req, res) => {
 });
 
 // Update menu item (protected)
-app.put('/api/menu-items/:id', auth, upload.single('image'), async (req, res) => {
+app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
-    // Verify the menu item belongs to the user's restaurant
     const existingItem = await MenuItem.findById(req.params.id);
     if (!existingItem) {
       return res.status(404).json({ error: 'Menu item not found' });
@@ -548,7 +446,6 @@ app.put('/api/menu-items/:id', auth, upload.single('image'), async (req, res) =>
 
     console.log('📦 Updating menu item:', req.params.id);
     console.log('🏪 Restaurant:', req.user.restaurant.name);
-    console.log('📝 Update data:', req.body);
 
     const updateData = {
       ...req.body,
@@ -562,7 +459,6 @@ app.put('/api/menu-items/:id', auth, upload.single('image'), async (req, res) =>
       isAvailable: req.body.isAvailable ? req.body.isAvailable === 'true' : undefined
     };
 
-    // If image was uploaded, update the image path
     if (req.file) {
       updateData.image = `/images/menu-items/${req.file.filename}`;
       console.log('📸 New image saved:', req.file.filename);
@@ -593,7 +489,6 @@ app.put('/api/menu-items/:id', auth, upload.single('image'), async (req, res) =>
 // Delete menu item (protected)
 app.delete('/api/menu-items/:id', auth, async (req, res) => {
   try {
-    // Verify the menu item belongs to the user's restaurant
     const existingItem = await MenuItem.findById(req.params.id);
     if (!existingItem) {
       return res.status(404).json({ error: 'Menu item not found' });
@@ -623,135 +518,136 @@ app.delete('/api/menu-items/:id', auth, async (req, res) => {
   }
 });
 
-// Bulk delete menu items by restaurant (protected)
-app.delete('/api/menu-items/bulk/restaurant/:restaurantId', auth, async (req, res) => {
+// ============================================================================
+// CATEGORIES ROUTES
+// ============================================================================
+
+app.get('/api/categories', auth, async (req, res) => {
   try {
-    const { restaurantId } = req.params;
+    const restaurantId = req.user.restaurant._id;
     
-    // Verify the restaurant ID matches the user's restaurant
-    if (restaurantId !== req.user.restaurant._id.toString()) {
-      return res.status(403).json({ error: 'Access denied - cannot delete items from other restaurants' });
-    }
+    console.log(`🔐 Fetching categories for: ${req.user.restaurant.name} (${restaurantId})`);
     
-    console.log(`🗑️ Bulk deleting menu items for restaurant: ${req.user.restaurant.name} (${restaurantId})`);
-    
-    // Delete all menu items for this restaurant
-    const result = await MenuItem.deleteMany({ restaurant: restaurantId });
-    
-    console.log(`✅ Successfully deleted ${result.deletedCount} menu items`);
+    const categories = await Category.find({ restaurant: restaurantId })
+      .populate('restaurant', 'name')
+      .select('-__v')
+      .sort('sortOrder');
+
+    console.log(`✅ Found ${categories.length} categories for ${req.user.restaurant.name}`);
     
     res.json({
-      message: `Successfully deleted ${result.deletedCount} menu items for restaurant ${req.user.restaurant.name}`,
-      deletedCount: result.deletedCount
+      message: 'Categories retrieved successfully',
+      categories
     });
   } catch (error) {
-    console.error('❌ Failed to bulk delete menu items:', error);
-    res.status(500).json({ 
-      error: 'Failed to bulk delete menu items', 
-      details: error.message 
-    });
+    console.error('❌ Failed to fetch categories:', error);
+    res.status(500).json({ error: 'Failed to fetch categories', details: error.message });
   }
 });
 
-// Bulk delete menu items by IDs (protected)
-app.delete('/api/menu-items/bulk/ids', auth, async (req, res) => {
+// Create category (protected)
+app.post('/api/categories', auth, async (req, res) => {
   try {
-    const { itemIds } = req.body;
+    console.log('📁 Creating new category for restaurant:', req.user.restaurant.name);
+    console.log('📝 Category data:', req.body);
     
-    if (!itemIds || !Array.isArray(itemIds)) {
-      return res.status(400).json({ 
-        error: 'itemIds array is required in request body' 
-      });
+    const categoryData = {
+      ...req.body,
+      restaurant: req.user.restaurant._id,
+      isPredefined: false
+    };
+
+    const category = new Category(categoryData);
+    const savedCategory = await category.save();
+    
+    const populatedCategory = await Category.findById(savedCategory._id)
+      .populate('restaurant', 'name');
+
+    console.log('✅ Category created successfully:', populatedCategory.name);
+    
+    res.status(201).json({
+      message: 'Category created successfully',
+      category: populatedCategory
+    });
+  } catch (error) {
+    console.error('❌ Failed to create category:', error);
+    res.status(500).json({ error: 'Failed to create category', details: error.message });
+  }
+});
+
+app.delete('/api/categories/:id', auth, async (req, res) => {
+  try {
+    console.log('🗑️ Attempting to delete category:', req.params.id);
+    console.log('🏪 Restaurant:', req.user.restaurant.name);
+
+    const category = await Category.findOne({
+      _id: req.params.id,
+      restaurant: req.user.restaurant._id
+    });
+
+    if (!category) {
+      console.log('❌ Category not found or does not belong to restaurant');
+      return res.status(404).json({ error: 'Category not found' });
     }
-    
-    console.log(`🗑️ Bulk deleting ${itemIds.length} menu items for restaurant: ${req.user.restaurant.name}`);
-    
-    // Verify all items belong to the user's restaurant
-    const items = await MenuItem.find({ _id: { $in: itemIds } });
-    const unauthorizedItems = items.filter(item => 
-      item.restaurant.toString() !== req.user.restaurant._id.toString()
-    );
-    
-    if (unauthorizedItems.length > 0) {
+
+    if (category.isPredefined) {
+      console.log('❌ Cannot delete predefined category:', category.name);
       return res.status(403).json({ 
-        error: 'Access denied - some items do not belong to your restaurant' 
+        error: 'Cannot delete predefined categories. You can only delete categories you created.' 
       });
     }
+
+    await Category.findByIdAndDelete(req.params.id);
     
-    const result = await MenuItem.deleteMany({ 
-      _id: { $in: itemIds } 
-    });
-    
-    console.log(`✅ Successfully deleted ${result.deletedCount} menu items`);
+    console.log('✅ Category deleted successfully:', category.name);
     
     res.json({
-      message: `Successfully deleted ${result.deletedCount} menu items`,
-      deletedCount: result.deletedCount,
-      requestedCount: itemIds.length
+      message: 'Category deleted successfully',
+      deletedCategory: {
+        id: category._id,
+        name: category.name
+      }
     });
   } catch (error) {
-    console.error('❌ Failed to bulk delete menu items:', error);
-    res.status(500).json({ 
-      error: 'Failed to bulk delete menu items', 
-      details: error.message 
-    });
+    console.error('❌ Failed to delete category:', error);
+    
+    if (error.name === 'CastError') {
+      return res.status(400).json({ error: 'Invalid category ID' });
+    }
+    
+    res.status(500).json({ error: 'Failed to delete category', details: error.message });
   }
 });
 
-// Keep only specific number of items (delete all except first N) - protected
-app.delete('/api/menu-items/bulk/restaurant/:restaurantId/keep/:count', auth, async (req, res) => {
+// ============================================================================
+// TABLES ROUTES
+// ============================================================================
+
+app.get('/api/tables', async (req, res) => {
   try {
-    const { restaurantId, count } = req.params;
+    const { restaurantId } = req.query;
+    let query = {};
     
-    // Verify the restaurant ID matches the user's restaurant
-    if (restaurantId !== req.user.restaurant._id.toString()) {
-      return res.status(403).json({ error: 'Access denied - cannot modify items from other restaurants' });
-    }
-    
-    const keepCount = parseInt(count);
-    
-    console.log(`🗑️ Keeping only ${keepCount} items for restaurant: ${req.user.restaurant.name}`);
-    
-    // First, get all menu items for this restaurant sorted by creation date
-    const allItems = await MenuItem.find({ restaurant: restaurantId })
-      .sort({ createdAt: 1 }); // oldest first
-    
-    if (allItems.length <= keepCount) {
-      return res.json({
-        message: `No items to delete. Restaurant already has ${allItems.length} items (<= ${keepCount})`,
-        deletedCount: 0,
-        keptCount: allItems.length
-      });
-    }
-    
-    // Items to delete (all except first 'keepCount' items)
-    const itemsToDelete = allItems.slice(keepCount);
-    const itemIdsToDelete = itemsToDelete.map(item => item._id);
-    
-    console.log(`🗑️ Deleting ${itemsToDelete.length} items, keeping ${keepCount}`);
-    
-    // Delete the items
-    const result = await MenuItem.deleteMany({ 
-      _id: { $in: itemIdsToDelete } 
-    });
-    
-    console.log(`✅ Successfully kept ${keepCount} items and deleted ${result.deletedCount} items`);
-    
+    if (restaurantId) query.restaurant = restaurantId;
+
+    const tables = await Table.find(query)
+      .populate('restaurant', 'name')
+      .select('-__v')
+      .sort('tableNumber');
+
     res.json({
-      message: `Successfully kept ${keepCount} items and deleted ${result.deletedCount} items`,
-      deletedCount: result.deletedCount,
-      keptCount: keepCount,
-      totalItemsBefore: allItems.length
+      message: 'Tables retrieved successfully',
+      tables
     });
   } catch (error) {
-    console.error('❌ Failed to bulk delete menu items:', error);
-    res.status(500).json({ 
-      error: 'Failed to bulk delete menu items', 
-      details: error.message 
-    });
+    res.status(500).json({ error: 'Failed to fetch tables', details: error.message });
   }
 });
-// Order Routes (protected - restaurant admin only)
+
+// ============================================================================
+// ORDERS ROUTES
+// ============================================================================
+
 app.get('/api/orders', auth, async (req, res) => {
   try {
     const { status } = req.query;
@@ -901,6 +797,10 @@ app.put('/api/orders/:id/pay', auth, async (req, res) => {
   }
 });
 
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
 // Helper function to reduce inventory when order is confirmed
 async function reduceInventory(orderItems) {
   try {
@@ -945,48 +845,114 @@ async function restoreInventory(orderItems) {
   }
 }
 
-// Get order statistics for dashboard
-app.get('/api/orders/stats', auth, async (req, res) => {
+// ============================================================================
+// ADDITIONAL UTILITY ROUTES
+// ============================================================================
+
+// Database Info Route
+app.get('/api/db-info', async (req, res) => {
   try {
-    const restaurantId = req.user.restaurant._id;
-    
-    const stats = await Order.aggregate([
-      {
-        $match: {
-          restaurant: mongoose.Types.ObjectId(restaurantId),
-          createdAt: {
-            $gte: new Date(new Date().setHours(0, 0, 0, 0)) // Today
-          }
-        }
-      },
-      {
-        $group: {
-          _id: '$status',
-          count: { $sum: 1 },
-          totalAmount: { $sum: '$totalAmount' }
-        }
-      }
+    const [restaurants, users, categories, menuItems, tables] = await Promise.all([
+      Restaurant.countDocuments(),
+      User.countDocuments(),
+      Category.countDocuments(),
+      MenuItem.countDocuments(),
+      Table.countDocuments()
     ]);
 
-    const totalOrders = await Order.countDocuments({ restaurant: restaurantId });
-    const todayOrders = await Order.countDocuments({
-      restaurant: restaurantId,
-      createdAt: { $gte: new Date(new Date().setHours(0, 0, 0, 0)) }
-    });
+    const restaurantList = await Restaurant.find().select('name email logo');
+    const userList = await User.find().select('name email restaurant').populate('restaurant', 'name');
 
     res.json({
-      message: 'Order statistics retrieved successfully',
-      stats: {
-        today: todayOrders,
-        total: totalOrders,
-        byStatus: stats
-      }
+      message: 'Database information',
+      counts: {
+        restaurants,
+        users,
+        categories,
+        menuItems,
+        tables
+      },
+      restaurants: restaurantList,
+      users: userList.map(user => ({
+        name: user.name,
+        email: user.email,
+        restaurant: user.restaurant?.name
+      }))
     });
   } catch (error) {
-    console.error('❌ Failed to fetch order statistics:', error);
-    res.status(500).json({ error: 'Failed to fetch order statistics', details: error.message });
+    res.status(500).json({ error: 'Failed to get database info', details: error.message });
   }
 });
+
+// Restaurant-specific data route
+app.get('/api/restaurant-data/:restaurantId', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+
+    const [restaurant, categories, menuItems, tables] = await Promise.all([
+      Restaurant.findById(restaurantId),
+      Category.find({ restaurant: restaurantId }).sort('sortOrder'),
+      MenuItem.find({ restaurant: restaurantId })
+        .populate('category', 'name')
+        .sort('name'),
+      Table.find({ restaurant: restaurantId }).sort('tableNumber')
+    ]);
+
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    res.json({
+      message: 'Restaurant data retrieved successfully',
+      restaurant,
+      categories,
+      menuItems,
+      tables
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch restaurant data', details: error.message });
+  }
+});
+
+// User's restaurant data (protected)
+app.get('/api/my-restaurant', auth, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant._id;
+
+    const [restaurant, categories, menuItems, tables] = await Promise.all([
+      Restaurant.findById(restaurantId),
+      Category.find({ restaurant: restaurantId }).sort('sortOrder'),
+      MenuItem.find({ restaurant: restaurantId })
+        .populate('category', 'name')
+        .sort('category name'),
+      Table.find({ restaurant: restaurantId }).sort('tableNumber')
+    ]);
+
+    res.json({
+      message: 'Restaurant data retrieved successfully',
+      restaurant,
+      categories,
+      menuItems,
+      tables
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch restaurant data', details: error.message });
+  }
+});
+
+// Protected route example
+app.get('/api/protected-test', auth, (req, res) => {
+  res.json({ 
+    message: 'This is a protected route!',
+    user: {
+      id: req.user._id,
+      name: req.user.name,
+      email: req.user.email,
+      restaurant: req.user.restaurant
+    }
+  });
+});
+
 // List all available routes
 app.get('/api', (req, res) => {
   const routes = [
@@ -994,7 +960,15 @@ app.get('/api', (req, res) => {
     { method: 'GET', path: '/api/test', description: 'Test backend' },
     { method: 'GET', path: '/api/test-db', description: 'Test database connection' },
     { method: 'GET', path: '/api/db-info', description: 'Get database information' },
-    { method: 'GET', path: '/api/seed-data', description: 'Seed database with sample data' },
+    
+    // Restaurant settings routes
+    { method: 'GET', path: '/api/restaurants/current', description: 'Get current restaurant (protected)' },
+    { method: 'PUT', path: '/api/restaurants/current', description: 'Update current restaurant (protected)' },
+    { method: 'PUT', path: '/api/restaurants/current/logo', description: 'Update restaurant logo (protected)' },
+    
+    // User profile routes
+    { method: 'GET', path: '/api/users/current', description: 'Get current user profile (protected)' },
+    { method: 'PUT', path: '/api/users/current', description: 'Update current user profile (protected)' },
     
     // Restaurant routes
     { method: 'GET', path: '/api/restaurants', description: 'Get all restaurants' },
@@ -1010,9 +984,17 @@ app.get('/api', (req, res) => {
     
     // Category routes (protected)
     { method: 'GET', path: '/api/categories', description: 'Get categories for logged-in restaurant (protected)' },
+    { method: 'POST', path: '/api/categories', description: 'Create category (protected)' },
+    { method: 'DELETE', path: '/api/categories/:id', description: 'Delete category (protected)' },
     
     // Table routes
     { method: 'GET', path: '/api/tables', description: 'Get tables (optional: restaurantId)' },
+    
+    // Order routes
+    { method: 'GET', path: '/api/orders', description: 'Get orders for logged-in restaurant (protected)' },
+    { method: 'GET', path: '/api/orders/:id', description: 'Get specific order (protected)' },
+    { method: 'PUT', path: '/api/orders/:id/status', description: 'Update order status (protected)' },
+    { method: 'PUT', path: '/api/orders/:id/pay', description: 'Mark order as paid (protected)' },
     
     // Auth routes
     { method: 'GET', path: '/api/auth', description: 'Auth base route' },
@@ -1021,8 +1003,7 @@ app.get('/api', (req, res) => {
     
     // Protected routes
     { method: 'GET', path: '/api/protected-test', description: 'Test protected route' },
-    { method: 'GET', path: '/api/my-restaurant', description: 'Get current user restaurant data (protected)' },
-    { method: 'GET', path: '/api/debug/menu-items-ownership', description: 'Debug menu item ownership (protected)' }
+    { method: 'GET', path: '/api/my-restaurant', description: 'Get current user restaurant data (protected)' }
   ];
   
   res.json({ 
@@ -1037,5 +1018,6 @@ app.listen(PORT, () => {
   console.log(`🔐 JWT Secret: ${JWT_SECRET === 'your-fallback-secret-key-change-in-production' ? 'Using fallback - set JWT_SECRET in .env' : 'Using environment variable'}`);
   console.log(`🌐 API available at: http://localhost:${PORT}/api`);
   console.log(`🖼️ Static images served from: http://localhost:${PORT}/images`);
-  console.log(`📸 Image naming format: restaurantName-itemName-YYYY-MM-DDTHH-MM-SS.ext`);
+  console.log(`📸 Menu item images: restaurantName-itemName-YYYY-MM-DDTHH-MM-SS.ext`);
+  console.log(`🖼️ Restaurant logos: logo-restaurantName-YYYY-MM-DDTHH-MM-SS.ext`);
 });

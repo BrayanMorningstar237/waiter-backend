@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import MenuManagement from './MenuManagement';
 import OrderManagement from './OrderManagement';
-import QRCodeGenerator from './QRCodeGenerator'; 
+import QRCodeGenerator from './QRCodeGenerator';
+import Settings from './Settings'; // Import the Settings component
 
 type TabType = 'dashboard' | 'menu' | 'orders' | 'qr-codes' | 'settings';
 
@@ -13,29 +14,28 @@ const Dashboard: React.FC = () => {
 
   // Fetch pending orders count
   useEffect(() => {
-   // In Dashboard component
-const fetchPendingOrdersCount = async () => {
-  try {
-    const token = localStorage.getItem('token');
-    const response = await fetch('/api/orders?status=pending', {
-      headers: { 
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
+    const fetchPendingOrdersCount = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const response = await fetch('/orders?status=pending', {
+          headers: { 
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        // Check if response is OK
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        setPendingOrdersCount(data.orders?.length || 0);
+      } catch (error) {
+        console.error('Failed to fetch pending orders count:', error);
+        setPendingOrdersCount(0); // Set to 0 on error
       }
-    });
-    
-    // Check if response is OK
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    setPendingOrdersCount(data.orders?.length || 0);
-  } catch (error) {
-    console.error('Failed to fetch pending orders count:', error);
-    setPendingOrdersCount(0); // Set to 0 on error
-  }
-};
+    };
 
     // Fetch count when orders tab is active or when component mounts
     if (activeTab === 'orders' || activeTab === 'dashboard') {
@@ -58,19 +58,19 @@ const fetchPendingOrdersCount = async () => {
   ];
 
   const renderContent = () => {
-  switch (activeTab) {
-    case 'menu':
-      return <MenuManagement />;
-    case 'orders':
-      return <OrderManagement />;
-    case 'qr-codes':
-      return <QRCodeGenerator />; // Replace QRCodeContent with QRCodeGenerator
-    case 'settings':
-      return <SettingsContent />;
-    default:
-      return <DashboardContent pendingOrdersCount={pendingOrdersCount} />;
-  }
-};
+    switch (activeTab) {
+      case 'menu':
+        return <MenuManagement />;
+      case 'orders':
+        return <OrderManagement />;
+      case 'qr-codes':
+        return <QRCodeGenerator />;
+      case 'settings':
+        return <Settings />; // Use the actual Settings component
+      default:
+        return <DashboardContent pendingOrdersCount={pendingOrdersCount} />;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-50 to-blue-50/30">
@@ -194,7 +194,7 @@ const fetchPendingOrdersCount = async () => {
         </header>
 
         {/* Main Content */}
-        <main className="sm:px-6 lg:px-8  lg:py-8 pb-24 md:pb-8">
+        <main className="sm:px-6 lg:px-8 lg:py-8 pb-24 md:pb-8">
           {renderContent()}
         </main>
 
@@ -424,55 +424,6 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ pendingOrdersCount 
   );
 };
 
-
-
-
-const SettingsContent: React.FC = () => (
-  <Placeholder icon="ri-settings-line" color="orange" title="Settings" />
-);
-
-interface PlaceholderProps {
-  icon: string;
-  color: string;
-  title: string;
-}
-
-const Placeholder: React.FC<PlaceholderProps> = ({ icon, color, title }) => {
-  const colorClasses = {
-    yellow: { bg: 'bg-yellow-50', text: 'text-yellow-600', border: 'border-yellow-200' },
-    blue: { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-200' },
-    purple: { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-purple-200' },
-    orange: { bg: 'bg-orange-50', text: 'text-orange-600', border: 'border-orange-200' },
-  };
-
-  const currentColor = colorClasses[color as keyof typeof colorClasses] || colorClasses.blue;
-
-  return (
-    <div className="max-w-4xl mx-auto">
-      <div className={`bg-white rounded-xl shadow-sm border ${currentColor.border} overflow-hidden`}>
-        <div className="p-6 border-b border-gray-200/50">
-          <div className="flex items-center space-x-3">
-            <div className={`p-3 ${currentColor.bg} rounded-xl`}>
-              <i className={`${icon} text-2xl ${currentColor.text}`}></i>
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">{title}</h2>
-              <p className="text-sm text-gray-500 mt-1">Manage your restaurant {title.toLowerCase()}</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-8 text-center">
-          <div className={`inline-flex p-4 ${currentColor.bg} rounded-full mb-4`}>
-            <i className={`ri-tools-line text-4xl ${currentColor.text}`}></i>
-          </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Coming Soon</h3>
-          <p className="text-gray-600 max-w-md mx-auto">
-            We're working hard to bring you this feature. Stay tuned for updates!
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-};
+// Remove the old SettingsContent and Placeholder components since we're using the actual Settings component
 
 export default Dashboard;

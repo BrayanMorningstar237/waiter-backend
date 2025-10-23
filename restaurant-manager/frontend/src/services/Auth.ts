@@ -2,6 +2,7 @@
 import api from './api'; // Use the consolidated api instance
 import type { User, LoginCredentials, AuthResponse } from '../types';
 
+
 export const authService = {
   // Login user
   login: async (credentials: LoginCredentials): Promise<AuthResponse> => {
