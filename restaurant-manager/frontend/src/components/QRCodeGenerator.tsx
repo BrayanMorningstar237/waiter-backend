@@ -391,135 +391,165 @@ const QRCodeGenerator: React.FC = () => {
                 </button>
               </div>
             </div>
+            {/* Pro Tips Section */}
+            <div className="mt-4 hidden lg:block bg-gradient-to-br from-amber-50/80 to-yellow-100/50 backdrop-blur-sm border border-amber-200/60 rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-xl">
+    <div className="flex gap-3 sm:gap-4">
+      <div className="bg-amber-100/80 rounded-xl p-3 flex-shrink-0">
+        <i className="ri-lightbulb-flash-line text-amber-600 text-xl sm:text-2xl"></i>
+      </div>
+      <div className="flex-1">
+        <p className="text-amber-900 font-bold text-sm sm:text-base lg:text-lg mb-2 sm:mb-3">Pro Tips</p>
+        <ul className="text-amber-800 text-xs sm:text-sm lg:text-base space-y-2">
+          <li className="flex items-center gap-2">
+            <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
+            Print table QR codes for each dining table
+          </li>
+          <li className="flex items-center gap-2">
+            <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
+            Use category QR codes for promotional displays
+          </li>
+          <li className="flex items-center gap-2">
+            <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
+            Item QR codes work great for featured specials
+          </li>
+          <li className="flex items-center gap-2">
+            <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
+            All QR codes automatically include table number
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
           </div>
 
           {/* Generated QR Codes Section */}
-          <div className="space-y-4 sm:space-y-6 ">
-            <div className="w-full bg-white/80 backdrop-blur-sm rounded-2xl sm:rounded-3xl shadow-xl border border-white/60">
-              <div className="p-4 sm:p-6 lg:p-8 border-b border-gray-100/60">
-                <h2 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Generated Codes</h2>
-                <p className="text-gray-600 text-xs sm:text-sm lg:text-base mt-1">
-                  {generatedQRs.length} code{generatedQRs.length !== 1 ? 's' : ''} generated
-                </p>
-              </div>
+          <div className="space-y-4 sm:space-y-6">
+  <div className="w-full bg-white/80 backdrop-blur-sm rounded-2xl sm:rounded-3xl shadow-xl border border-white/60">
+    <div className="p-4 sm:p-6 lg:p-8 border-b border-gray-100/60">
+      <h2 className="text-lg sm:text-xl lg:text-2xl font-bold text-gray-900">Generated Codes</h2>
+      <p className="text-gray-600 text-xs sm:text-sm lg:text-base mt-1">
+        {generatedQRs.length} code{generatedQRs.length !== 1 ? 's' : ''} generated
+      </p>
+    </div>
 
-              <div className="p-4 sm:p-6 lg:p-8 max-h-[70vh] overflow-y-auto">
-                {generatedQRs.length === 0 ? (
-                  <div className="text-center py-8 sm:py-12 lg:py-16 bg-gradient-to-br from-gray-50 to-blue-50/30 rounded-xl border-2 border-dashed border-gray-300/60">
-                    <div className="animate-bounce mb-4">
-                      <i className="ri-qr-code-line text-5xl sm:text-6xl text-gray-400/60"></i>
-                    </div>
-                    <p className="text-gray-500 text-sm sm:text-base lg:text-lg font-semibold">No QR Codes Yet</p>
-                    <p className="text-gray-400 text-xs sm:text-sm lg:text-base mt-1 px-4">
-                      Generate your first QR code to see it here
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-4 sm:space-y-5 lg:space-y-6">
-                    {generatedQRs.map((qr) => (
-                      <div
-                        key={qr.id}
-                        className={`bg-gradient-to-br ${getQRCodeGradient(qr.type)} border-2 rounded-2xl p-4 sm:p-5 lg:p-6 transition-all duration-300 hover:shadow-lg hover:scale-102 group`}
-                      >
-                        <div className="flex items-start justify-between mb-4">
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <div className="bg-white/80 rounded-xl p-2 flex-shrink-0">
-                              <i className={`${getQRCodeIcon(qr.type)} text-xl`}></i>
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <span className="font-bold text-gray-900 text-sm sm:text-base lg:text-lg truncate block">
-                                {qr.name}
-                              </span>
-                              <span className="text-gray-600 text-xs sm:text-sm block">
-                                Table: {qr.tableNumber}
-                              </span>
-                            </div>
-                          </div>
-                          <span className={`border-2 ${getBadgeColor(qr.type)} px-2 py-1 rounded-full text-xs font-bold capitalize flex-shrink-0`}>
-                            {qr.type}
-                          </span>
-                        </div>
-
-                        {/* QR Code Image */}
-                        <div className="bg-white rounded-xl p-3 sm:p-4 mb-4 text-center border-2 border-white shadow-lg group-hover:shadow-xl transition-shadow duration-300">
-                          <img
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr.url)}&margin=10`}
-                            alt={`QR Code for ${qr.name}`}
-                            className="mx-auto rounded-lg w-32 h-32 sm:w-36 sm:h-36 lg:w-40 lg:h-40"
-                          />
-                        </div>
-
-                        {/* URL Display */}
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between text-xs sm:text-sm lg:text-base">
-                            <span className="text-gray-600 font-semibold">URL:</span>
-                            <button
-                              onClick={() => copyToClipboard(qr.url)}
-                              className="text-blue-600 hover:text-blue-700 active:text-blue-800 flex items-center gap-1 font-semibold transition-all duration-200 hover:scale-105"
-                            >
-                              <i className="ri-clipboard-line"></i>
-                              Copy
-                            </button>
-                          </div>
-                          <div className="text-xs sm:text-sm text-gray-500 bg-white/80 rounded-lg px-3 py-2 truncate border font-mono backdrop-blur-sm">
-                            {qr.url}
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex gap-2 mt-4">
-                            <button
-                              onClick={() => downloadQRCode(qr)}
-                              className="flex-1 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white py-2.5 sm:py-3 px-3 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-md hover:shadow-lg hover:scale-105"
-                            >
-                              <i className="ri-download-line"></i>
-                              <span>Download</span>
-                            </button>
-                            <button
-                              onClick={() => window.open(qr.url, '_blank')}
-                              className="flex-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white py-2.5 sm:py-3 px-3 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-md hover:shadow-lg hover:scale-105"
-                            >
-                              <i className="ri-eye-line"></i>
-                              <span>Preview</span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Enhanced Pro Tips */}
-            <div className="bg-gradient-to-br from-amber-50/80 to-yellow-100/50 backdrop-blur-sm border border-amber-200/60 rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-xl">
-              <div className="flex gap-3 sm:gap-4">
-                <div className="bg-amber-100/80 rounded-xl p-3 flex-shrink-0">
-                  <i className="ri-lightbulb-flash-line text-amber-600 text-xl sm:text-2xl"></i>
-                </div>
-                <div className="flex-1">
-                  <p className="text-amber-900 font-bold text-sm sm:text-base lg:text-lg mb-2 sm:mb-3">Pro Tips</p>
-                  <ul className="text-amber-800 text-xs sm:text-sm lg:text-base space-y-2">
-                    <li className="flex items-center gap-2">
-                      <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
-                      Print table QR codes for each dining table
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
-                      Use category QR codes for promotional displays
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
-                      Item QR codes work great for featured specials
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
-                      All QR codes automatically include table number
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
+    <div className="p-4 sm:p-6 lg:p-8 max-h-[70vh] overflow-y-auto">
+      {generatedQRs.length === 0 ? (
+        <div className="text-center py-8 sm:py-12 lg:py-16 bg-gradient-to-br from-gray-50 to-blue-50/30 rounded-xl border-2 border-dashed border-gray-300/60">
+          <div className="animate-bounce mb-4">
+            <i className="ri-qr-code-line text-5xl sm:text-6xl text-gray-400/60"></i>
           </div>
+          <p className="text-gray-500 text-sm sm:text-base lg:text-lg font-semibold">No QR Codes Yet</p>
+          <p className="text-gray-400 text-xs sm:text-sm lg:text-base mt-1 px-4">
+            Generate your first QR code to see it here
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4 sm:space-y-5 lg:space-y-6">
+          {generatedQRs.map((qr) => (
+            <div
+              key={qr.id}
+              className={`bg-gradient-to-br ${getQRCodeGradient(qr.type)} border-2 rounded-2xl p-4 sm:p-5 lg:p-6 transition-all duration-300 hover:shadow-lg hover:scale-102 group`}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  <div className="bg-white/80 rounded-xl p-2 flex-shrink-0">
+                    <i className={`${getQRCodeIcon(qr.type)} text-xl`}></i>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="font-bold text-gray-900 text-sm sm:text-base lg:text-lg truncate block">
+                      {qr.name}
+                    </span>
+                    <span className="text-gray-600 text-xs sm:text-sm block">
+                      Table: {qr.tableNumber}
+                    </span>
+                  </div>
+                </div>
+                <span className={`border-2 ${getBadgeColor(qr.type)} px-2 py-1 rounded-full text-xs font-bold capitalize flex-shrink-0`}>
+                  {qr.type}
+                </span>
+              </div>
+
+              {/* QR Code Image */}
+              <div className="bg-white rounded-xl p-3 sm:p-4 mb-4 text-center border-2 border-white shadow-lg group-hover:shadow-xl transition-shadow duration-300">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr.url)}&margin=10`}
+                  alt={`QR Code for ${qr.name}`}
+                  className="mx-auto rounded-lg w-32 h-32 sm:w-36 sm:h-36 lg:w-40 lg:h-40"
+                />
+              </div>
+
+              {/* URL Display */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs sm:text-sm lg:text-base">
+                  <span className="text-gray-600 font-semibold">URL:</span>
+                  <button
+                    onClick={() => copyToClipboard(qr.url)}
+                    className="text-blue-600 hover:text-blue-700 active:text-blue-800 flex items-center gap-1 font-semibold transition-all duration-200 hover:scale-105"
+                  >
+                    <i className="ri-clipboard-line"></i>
+                    Copy
+                  </button>
+                </div>
+                <div className="text-xs sm:text-sm text-gray-500 bg-white/80 rounded-lg px-3 py-2 truncate border font-mono backdrop-blur-sm">
+                  {qr.url}
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-wrap gap-2 mt-4 justify-between">
+                  <button
+                    onClick={() => downloadQRCode(qr)}
+                    className="flex-1 min-w-[140px] bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white py-2.5 sm:py-3 px-3 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-md hover:shadow-lg hover:scale-[1.02] basis-[calc(50%-0.25rem)]"
+                  >
+                    <i className="ri-download-line"></i>
+                    <span>Download</span>
+                  </button>
+                  <button
+                    onClick={() => window.open(qr.url, '_blank')}
+                    className="flex-1 min-w-[140px] bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white py-2.5 sm:py-3 px-3 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-300 flex items-center justify-center gap-2 shadow-md hover:shadow-lg hover:scale-[1.02] basis-[calc(50%-0.25rem)]"
+                  >
+                    <i className="ri-eye-line"></i>
+                    <span>Preview</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+
+  {/* Enhanced Pro Tips */}
+  <div className="lg:hidden bg-gradient-to-br from-amber-50/80 to-yellow-100/50 backdrop-blur-sm border border-amber-200/60 rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-xl">
+    <div className="flex gap-3 sm:gap-4">
+      <div className="bg-amber-100/80 rounded-xl p-3 flex-shrink-0">
+        <i className="ri-lightbulb-flash-line text-amber-600 text-xl sm:text-2xl"></i>
+      </div>
+      <div className="flex-1">
+        <p className="text-amber-900 font-bold text-sm sm:text-base lg:text-lg mb-2 sm:mb-3">Pro Tips</p>
+        <ul className="text-amber-800 text-xs sm:text-sm lg:text-base space-y-2">
+          <li className="flex items-center gap-2">
+            <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
+            Print table QR codes for each dining table
+          </li>
+          <li className="flex items-center gap-2">
+            <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
+            Use category QR codes for promotional displays
+          </li>
+          <li className="flex items-center gap-2">
+            <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
+            Item QR codes work great for featured specials
+          </li>
+          <li className="flex items-center gap-2">
+            <i className="ri-checkbox-circle-line text-amber-600 text-base"></i>
+            All QR codes automatically include table number
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
         </div>
       </div>
     </div>
