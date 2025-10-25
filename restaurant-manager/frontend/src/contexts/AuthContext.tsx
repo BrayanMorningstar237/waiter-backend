@@ -1,8 +1,8 @@
-// contexts/AuthContext.tsx
+// contexts/AuthContext.tsx - CORRECTED VERSION
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { authService } from '../services/Auth';
-import api from '../services/Auth'; // Import the default api export
+import api from '../services/Auth';
 import type { 
   User, 
   LoginCredentials, 
@@ -44,45 +44,46 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check if user is logged in on app start
-    const initAuth = async () => {
-      console.log('🔐 AuthProvider - Initializing authentication...');
-      const token = authService.getToken();
-      const savedUser = authService.getCurrentUser();
+    // In your AuthContext.tsx, update the initAuth function with more detailed logging:
+const initAuth = async () => {
+  console.log('🔐 AuthProvider - Initializing authentication...');
+  const token = authService.getToken();
+  const savedUser = authService.getCurrentUser();
+  
+  console.log('🔐 AuthProvider - Token found:', !!token);
+  console.log('🔐 AuthProvider - Saved user found:', !!savedUser);
+  
+  if (token && savedUser) {
+    try {
+      console.log('🔐 AuthProvider - Verifying token with backend...');
+      const userData = await authService.verifyToken();
       
-      console.log('🔐 AuthProvider - Token found:', !!token);
-      console.log('🔐 AuthProvider - Saved user found:', !!savedUser);
+      console.log('✅ AuthProvider - Full userData:', userData);
+      console.log('✅ AuthProvider - Restaurant in userData:', userData.restaurant);
+      console.log('🔍 Restaurant keys:', userData.restaurant ? Object.keys(userData.restaurant) : 'No restaurant');
+      console.log('🖼️ Logo in restaurant:', userData.restaurant?.logo);
       
-      if (token && savedUser) {
-        try {
-          console.log('🔐 AuthProvider - Verifying token with backend...');
-          // Verify token with backend and get user data with restaurant
-          const userData = await authService.verifyToken();
-          setUser(userData);
-          
-          // If user data includes restaurant, set it
-          if (userData.restaurant) {
-            setRestaurant(userData.restaurant);
-            console.log('✅ AuthProvider - Restaurant data loaded:', userData.restaurant.name);
-          }
-          
-          console.log('✅ AuthProvider - Token verified, user authenticated:', userData.name);
-        } catch (error) {
-          // Token is invalid, clear storage
-          console.error('❌ AuthProvider - Token verification failed, clearing storage');
-          authService.logout();
-          setUser(null);
-          setRestaurant(null);
-        }
-      } else {
-        console.log('🔐 AuthProvider - No valid token or user found');
-        setUser(null);
-        setRestaurant(null);
+      setUser(userData);
+      
+      if (userData.restaurant) {
+        setRestaurant(userData.restaurant);
+        console.log('✅ AuthProvider - Restaurant state set:', userData.restaurant);
       }
       
-      setIsLoading(false);
-      console.log('🔐 AuthProvider - Authentication initialization complete');
-    };
+    } catch (error) {
+      console.error('❌ AuthProvider - Token verification failed, clearing storage');
+      authService.logout();
+      setUser(null);
+      setRestaurant(null);
+    }
+  } else {
+    console.log('🔐 AuthProvider - No valid token or user found');
+    setUser(null);
+    setRestaurant(null);
+  }
+  
+  setIsLoading(false);
+};
 
     initAuth();
   }, []);
@@ -93,7 +94,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const response = await authService.login(credentials);
       setUser(response.user);
       
-      // Set restaurant data after login
       if (response.user.restaurant) {
         setRestaurant(response.user.restaurant);
         console.log('✅ AuthProvider - Restaurant data loaded:', response.user.restaurant.name);
@@ -115,37 +115,38 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const updateRestaurantSettings = async (settings: Partial<RestaurantSettings>) => {
-    try {
-      console.log('🔐 AuthProvider - Updating restaurant settings...');
-      setIsLoading(true);
-      
-      // Fixed: Added /api prefix
-      const response = await api.put('/restaurants/current', settings);
-      
-      // Update local state
-      if (response.data.restaurant) {
-        setRestaurant(response.data.restaurant);
-        console.log('✅ AuthProvider - Restaurant settings updated');
-      }
-      
-      return response.data;
-    } catch (error: any) {
-      console.error('❌ AuthProvider - Failed to update restaurant settings:', error);
-      throw new Error(error.response?.data?.error || 'Failed to update restaurant settings');
-    } finally {
-      setIsLoading(false);
+  try {
+    console.log('🔐 AuthProvider - Updating restaurant settings...', settings);
+    setIsLoading(true);
+    
+    const response = await api.put('/restaurants/current', settings);
+    console.log('✅ AuthProvider - API Response:', response.data);
+    
+    if (response.data.restaurant) {
+      console.log('🔄 AuthProvider - Updating restaurant state with:', response.data.restaurant);
+      setRestaurant(response.data.restaurant);
+      console.log('✅ AuthProvider - Restaurant settings updated in state');
+    } else {
+      console.warn('⚠️ AuthProvider - No restaurant data in response');
     }
-  };
+    
+    return response.data;
+  } catch (error: any) {
+    console.error('❌ AuthProvider - Failed to update restaurant settings:', error);
+    throw new Error(error.response?.data?.error || 'Failed to update restaurant settings');
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const updateAdminSettings = async (settings: AdminSettings) => {
     try {
       console.log('🔐 AuthProvider - Updating admin settings...');
       setIsLoading(true);
       
-      // Fixed: Added /api prefix and corrected endpoint
+      // CORRECT: No /api prefix
       const response = await api.put('/users/current', settings);
       
-      // Update local state
       if (response.data.user) {
         setUser(response.data.user);
         console.log('✅ AuthProvider - Admin settings updated');
@@ -161,39 +162,40 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const updateRestaurantLogo = async (file: File) => {
-    try {
-      console.log('🔐 AuthProvider - Updating restaurant logo...');
-      setIsLoading(true);
-      
-      const formData = new FormData();
-      formData.append('logo', file);
+  try {
+    console.log('🔐 AuthProvider - Updating restaurant logo...');
+    setIsLoading(true);
+    
+    const formData = new FormData();
+    formData.append('logo', file);
 
-      // Fixed: Added /api prefix
-      const response = await api.put('/restaurants/current/logo', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
-      
-      // Update local state
-      if (response.data.restaurant) {
-        setRestaurant(response.data.restaurant);
-        console.log('✅ AuthProvider - Restaurant logo updated');
+    const response = await api.put('/restaurants/current/logo', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
       }
-      
-      return response.data;
-    } catch (error: any) {
-      console.error('❌ AuthProvider - Failed to update restaurant logo:', error);
-      throw new Error(error.response?.data?.error || 'Failed to update restaurant logo');
-    } finally {
-      setIsLoading(false);
+    });
+    
+    console.log('✅ AuthProvider - Logo upload response:', response.data);
+    
+    // Update local state with the new logo path from response
+    if (response.data.restaurant) {
+      setRestaurant(response.data.restaurant);
+      console.log('✅ AuthProvider - Restaurant logo updated in state:', response.data.restaurant.logo);
     }
-  };
+    
+    return response.data; // Make sure this line exists
+  } catch (error: any) {
+    console.error('❌ AuthProvider - Failed to update restaurant logo:', error);
+    throw new Error(error.response?.data?.error || 'Failed to update restaurant logo');
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const refreshRestaurantData = async () => {
     try {
       console.log('🔐 AuthProvider - Refreshing restaurant data...');
-      // Fixed: Added /api prefix
+      // CORRECT: No /api prefix
       const response = await api.get('/restaurants/current');
       
       if (response.data.restaurant) {
@@ -205,24 +207,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (error: any) {
       console.error('❌ AuthProvider - Failed to refresh restaurant data:', error);
       throw new Error(error.response?.data?.error || 'Failed to refresh restaurant data');
-    }
-  };
-
-  const refreshUserData = async () => {
-    try {
-      console.log('🔐 AuthProvider - Refreshing user data...');
-      // Fixed: Added /api prefix
-      const response = await api.get('/users/current');
-      
-      if (response.data.user) {
-        setUser(response.data.user);
-        console.log('✅ AuthProvider - User data refreshed');
-      }
-      
-      return response.data;
-    } catch (error: any) {
-      console.error('❌ AuthProvider - Failed to refresh user data:', error);
-      throw new Error(error.response?.data?.error || 'Failed to refresh user data');
     }
   };
 

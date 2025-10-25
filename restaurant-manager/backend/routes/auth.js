@@ -46,6 +46,8 @@ router.post('/login', async (req, res) => {
 
     console.log('✅ User found - Name:', user.name);
     console.log('✅ Restaurant:', user.restaurant?.name);
+    console.log('🖼️ Restaurant logo in DB:', user.restaurant?.logo); // Add this log
+    console.log('📋 All restaurant fields:', user.restaurant ? Object.keys(user.restaurant.toObject ? user.restaurant.toObject() : user.restaurant) : 'No restaurant'); // Add this log
 
     // Check password
     console.log('🔑 Starting password comparison...');
@@ -77,6 +79,7 @@ router.post('/login', async (req, res) => {
 
     console.log('✅ LOGIN SUCCESSFUL for:', user.email);
     
+    // RETURN COMPLETE RESTAURANT DATA (not just id and name)
     res.json({
       message: 'Login successful',
       token,
@@ -85,10 +88,7 @@ router.post('/login', async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        restaurant: {
-          id: user.restaurant._id,
-          name: user.restaurant.name
-        }
+        restaurant: user.restaurant // Return the FULL restaurant object
       }
     });
 

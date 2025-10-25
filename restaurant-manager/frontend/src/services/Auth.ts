@@ -58,17 +58,28 @@ export const authService = {
   },
 
   // Verify token with backend
-  verifyToken: async (): Promise<User> => {
-    try {
-      console.log('🔐 AuthService - Verifying token');
-      const response = await api.get<{ user: User }>('/auth/me');
-      console.log('✅ AuthService - Token verified, user:', response.data.user.name);
-      return response.data.user;
-    } catch (error) {
-      console.error('❌ AuthService - Token verification failed:', error);
-      throw error;
-    }
-  },
+  // In services/Auth.ts - Update verifyToken method
+verifyToken: async (): Promise<User> => {
+  try {
+    console.log('🔐 AuthService - Verifying token');
+    
+    // Change this from '/auth/me' to '/users/current'
+    const response = await api.get<{ user: User }>('/users/current');
+    
+    console.log('✅ AuthService - Token verified, user:', response.data.user.name);
+    console.log('🔍 AuthService - Restaurant data:', response.data.user.restaurant);
+    console.log('🖼️ AuthService - Restaurant logo:', response.data.user.restaurant?.logo);
+    
+    // Update localStorage with the fresh user data
+    localStorage.setItem('user', JSON.stringify(response.data.user));
+    console.log('💾 AuthService - Updated user data in localStorage');
+    
+    return response.data.user;
+  } catch (error) {
+    console.error('❌ AuthService - Token verification failed:', error);
+    throw error;
+  }
+},
 };
 
 export default api;
