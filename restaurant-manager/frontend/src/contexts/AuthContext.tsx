@@ -116,18 +116,15 @@ const initAuth = async () => {
 
   const updateRestaurantSettings = async (settings: Partial<RestaurantSettings>) => {
   try {
-    console.log('🔐 AuthProvider - Updating restaurant settings...', settings);
+    console.log('🔐 AuthProvider - Updating restaurant settings...');
     setIsLoading(true);
     
     const response = await api.put('/restaurants/current', settings);
-    console.log('✅ AuthProvider - API Response:', response.data);
     
+    // Update local state
     if (response.data.restaurant) {
-      console.log('🔄 AuthProvider - Updating restaurant state with:', response.data.restaurant);
       setRestaurant(response.data.restaurant);
-      console.log('✅ AuthProvider - Restaurant settings updated in state');
-    } else {
-      console.warn('⚠️ AuthProvider - No restaurant data in response');
+      console.log('✅ AuthProvider - Restaurant settings updated');
     }
     
     return response.data;
@@ -140,26 +137,26 @@ const initAuth = async () => {
 };
 
   const updateAdminSettings = async (settings: AdminSettings) => {
-    try {
-      console.log('🔐 AuthProvider - Updating admin settings...');
-      setIsLoading(true);
-      
-      // CORRECT: No /api prefix
-      const response = await api.put('/users/current', settings);
-      
-      if (response.data.user) {
-        setUser(response.data.user);
-        console.log('✅ AuthProvider - Admin settings updated');
-      }
-      
-      return response.data;
-    } catch (error: any) {
-      console.error('❌ AuthProvider - Failed to update admin settings:', error);
-      throw new Error(error.response?.data?.error || 'Failed to update admin settings');
-    } finally {
-      setIsLoading(false);
+  try {
+    console.log('🔐 AuthProvider - Updating admin settings...');
+    setIsLoading(true);
+    
+    // The API call should now include name, email, phone, and password fields
+    const response = await api.put('/users/current', settings);
+    
+    if (response.data.user) {
+      setUser(response.data.user);
+      console.log('✅ AuthProvider - Admin settings updated');
     }
-  };
+    
+    return response.data;
+  } catch (error: any) {
+    console.error('❌ AuthProvider - Failed to update admin settings:', error);
+    throw new Error(error.response?.data?.error || 'Failed to update admin settings');
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const updateRestaurantLogo = async (file: File) => {
   try {

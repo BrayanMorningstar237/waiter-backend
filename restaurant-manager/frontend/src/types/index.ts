@@ -94,6 +94,7 @@ export interface RestaurantSettings {
 }
 
 export interface AdminSettings {
+  name?: string;
   email: string;
   phone?: string;
   currentPassword?: string;

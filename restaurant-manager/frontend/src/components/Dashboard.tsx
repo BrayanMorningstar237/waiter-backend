@@ -4,20 +4,26 @@ import MenuManagement from './MenuManagement';
 import OrderManagement from './OrderManagement';
 import QRCodeGenerator from './QRCodeGenerator';
 import Settings from './Settings'; // Import the Settings component
-
+import { useSearchParams } from 'react-router-dom';
 type TabType = 'dashboard' | 'menu' | 'orders' | 'qr-codes' | 'settings';
 
 const Dashboard: React.FC = () => {
   const { user, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [searchParams, setSearchParams] = useSearchParams();
   const [pendingOrdersCount, setPendingOrdersCount] = useState<number>(0);
+  
+  // Get active tab from URL or default to 'dashboard'
+  const activeTab = (searchParams.get('tab') as TabType) || 'dashboard';
 
+  const setActiveTab = (tab: TabType) => {
+    setSearchParams({ tab });
+  };
   // Fetch pending orders count
-  useEffect(() => {
+ useEffect(() => {
     const fetchPendingOrdersCount = async () => {
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch('/orders?status=pending', {
+        const response = await fetch('/api/orders?status=pending', { // Fixed: added /api prefix
           headers: { 
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json'

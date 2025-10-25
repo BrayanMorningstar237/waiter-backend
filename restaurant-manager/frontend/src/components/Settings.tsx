@@ -1,15 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { defaultThemes } from '../types';
 import type { RestaurantSettings, AdminSettings, RestaurantTheme } from '../types';
 
-const AdminSettings: React.FC = () => {
+const Settings: React.FC = () => {
   const { restaurant, user, updateRestaurantSettings, updateAdminSettings, updateRestaurantLogo } = useAuth();
-  const [activeTab, setActiveTab] = useState<'general' | 'theme' | 'admin' | 'preview'>('general');
-  const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const { showSuccess, showError } = useToast();
+  
+  const [activeTab, setActiveTab] = useState<'general' | 'theme' | 'admin' | 'preview'>(() => {
+    const savedTab = localStorage.getItem('settings-active-tab');
+    return (savedTab as 'general' | 'theme' | 'admin' | 'preview') || 'general';
+  });
 
-  // Form states
+  const [isLoading, setIsLoading] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
   const [generalInfo, setGeneralInfo] = useState<Partial<RestaurantSettings>>({
     name: '',
     description: '',
@@ -26,6 +32,7 @@ const AdminSettings: React.FC = () => {
   });
 
   const [adminInfo, setAdminInfo] = useState<AdminSettings>({
+    name: '',
     email: '',
     phone: '',
     currentPassword: '',
@@ -35,6 +42,12 @@ const AdminSettings: React.FC = () => {
 
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState('');
+
+  const handleTabChange = (tab: 'general' | 'theme' | 'admin' | 'preview') => {
+    setActiveTab(tab);
+    localStorage.setItem('settings-active-tab', tab);
+    setIsMobileMenuOpen(false);
+  };
 
   useEffect(() => {
     if (restaurant) {
@@ -57,7 +70,10 @@ const AdminSettings: React.FC = () => {
       
       setThemeSettings(restaurant.theme || {
         primaryColor: '#3B82F6',
-        secondaryColor: '#1E40AF'
+        secondaryColor: '#1E40AF',
+        backgroundColor: '#FFFFFF',
+        textColor: '#1F2937',
+        accentColor: '#10B981'
       });
       setLogoPreview(restaurant.logo || '');
     }
@@ -65,16 +81,12 @@ const AdminSettings: React.FC = () => {
     if (user) {
       setAdminInfo(prev => ({
         ...prev,
+        name: user.name || '',
         email: user.email,
         phone: user.phone || ''
       }));
     }
   }, [restaurant, user]);
-
-  const showMessage = (type: 'success' | 'error', text: string) => {
-    setMessage({ type, text });
-    setTimeout(() => setMessage(null), 5000);
-  };
 
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -91,9 +103,9 @@ const AdminSettings: React.FC = () => {
     
     try {
       await updateRestaurantSettings(generalInfo);
-      showMessage('success', 'Restaurant information updated successfully');
+      showSuccess('Restaurant information updated successfully');
     } catch (error: any) {
-      showMessage('error', error.message || 'Failed to update information');
+      showError(error.message || 'Failed to update information');
     } finally {
       setIsLoading(false);
     }
@@ -101,15 +113,18 @@ const AdminSettings: React.FC = () => {
 
   const handleLogoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!logoFile) return;
+    if (!logoFile) {
+      showError('Please select a logo file');
+      return;
+    }
 
     setIsLoading(true);
     try {
       await updateRestaurantLogo(logoFile);
-      showMessage('success', 'Logo updated successfully');
+      showSuccess('Logo updated successfully');
       setLogoFile(null);
     } catch (error: any) {
-      showMessage('error', error.message || 'Failed to upload logo');
+      showError(error.message || 'Failed to upload logo');
     } finally {
       setIsLoading(false);
     }
@@ -121,9 +136,9 @@ const AdminSettings: React.FC = () => {
     
     try {
       await updateRestaurantSettings({ theme: themeSettings });
-      showMessage('success', 'Theme updated successfully');
+      showSuccess('Theme updated successfully');
     } catch (error: any) {
-      showMessage('error', error.message || 'Failed to update theme');
+      showError(error.message || 'Failed to update theme');
     } finally {
       setIsLoading(false);
     }
@@ -133,7 +148,7 @@ const AdminSettings: React.FC = () => {
     e.preventDefault();
     
     if (adminInfo.newPassword && adminInfo.newPassword !== adminInfo.confirmPassword) {
-      showMessage('error', 'New passwords do not match');
+      showError('New passwords do not match');
       return;
     }
 
@@ -142,7 +157,6 @@ const AdminSettings: React.FC = () => {
     try {
       await updateAdminSettings(adminInfo);
       
-      // Clear password fields
       setAdminInfo(prev => ({ 
         ...prev, 
         currentPassword: '', 
@@ -150,9 +164,9 @@ const AdminSettings: React.FC = () => {
         confirmPassword: '' 
       }));
       
-      showMessage('success', 'Admin information updated successfully');
+      showSuccess('Admin information updated successfully');
     } catch (error: any) {
-      showMessage('error', error.message || 'Failed to update admin information');
+      showError(error.message || 'Failed to update admin information');
     } finally {
       setIsLoading(false);
     }
@@ -160,295 +174,348 @@ const AdminSettings: React.FC = () => {
 
   const applyTheme = (theme: RestaurantTheme) => {
     setThemeSettings(theme);
+    showSuccess('Theme applied! Click "Save Theme" to confirm.');
   };
 
   if (!restaurant || !user) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-emerald-50/20 flex items-center justify-center px-4">
         <div className="text-center">
-          <i className="ri-loader-4-line animate-spin text-4xl text-green-600 mb-4"></i>
-          <p className="text-gray-600">Loading settings...</p>
+          <div className="animate-pulse mb-4">
+            <i className="ri-restaurant-2-line text-6xl text-green-600/60"></i>
+          </div>
+          <i className="ri-loader-4-line animate-spin text-3xl text-green-600 mb-4"></i>
+          <p className="text-gray-600 font-medium">Loading your settings...</p>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50 py-8">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Restaurant Settings</h1>
-          <p className="mt-2 text-sm text-gray-600">
-            Manage your restaurant information, appearance, and admin settings
-          </p>
-        </div>
+  const tabs = [
+    { id: 'general', label: 'General', icon: 'ri-building-4-line', color: 'blue' },
+    { id: 'theme', label: 'Appearance', icon: 'ri-palette-line', color: 'purple' },
+    { id: 'admin', label: 'Admin', icon: 'ri-user-settings-line', color: 'green' },
+    { id: 'preview', label: 'Preview', icon: 'ri-eye-line', color: 'orange' }
+  ];
 
-        {message && (
-          <div className={`mb-6 p-4 rounded-lg ${
-            message.type === 'success' 
-              ? 'bg-green-50 border border-green-200 text-green-700' 
-              : 'bg-red-50 border border-red-200 text-red-700'
-          }`}>
-            <div className="flex items-center">
-              <i className={`ri-${message.type === 'success' ? 'check' : 'error-warning'}-line mr-2`}></i>
-              {message.text}
+  const getTabColor = (tabId: string) => {
+    const tab = tabs.find(t => t.id === tabId);
+    return tab?.color || 'blue';
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-emerald-50/20 py-4 sm:py-6 lg:py-8">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+        {/* Enhanced Header */}
+        <div className="mb-6 sm:mb-8 lg:mb-12">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 lg:w-12 lg:h-12 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center shadow-lg">
+              <i className="ri-settings-3-line text-white text-lg lg:text-xl"></i>
+            </div>
+            <div>
+              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                Restaurant Settings
+              </h1>
+              <p className="text-sm sm:text-base text-gray-600 mt-1">
+                Customize your restaurant's appearance and configuration
+              </p>
             </div>
           </div>
-        )}
+        </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          {/* Tabs */}
-          <div className="border-b border-gray-200">
-            <nav className="flex -mb-px">
-              {[
-                { id: 'general', label: 'General', icon: 'ri-restaurant-line' },
-                { id: 'theme', label: 'Theme', icon: 'ri-palette-line' },
-                { id: 'admin', label: 'Admin', icon: 'ri-user-settings-line' },
-                { id: 'preview', label: 'Preview', icon: 'ri-eye-line' }
-              ].map((tab) => (
+        {/* Enhanced Navigation */}
+        <div className="bg-white/80 backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-xl border border-white/50 mb-6 lg:mb-8 overflow-hidden">
+          {/* Mobile Navigation */}
+          <div className="lg:hidden border-b border-gray-100/50">
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="w-full flex items-center justify-between px-4 sm:px-6 py-4 text-left group"
+            >
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-xl bg-${getTabColor(activeTab)}-100 flex items-center justify-center`}>
+                  <i className={`${tabs.find(t => t.id === activeTab)?.icon} text-lg text-${getTabColor(activeTab)}-600`}></i>
+                </div>
+                <div>
+                  <span className="font-semibold text-gray-900 block">
+                    {tabs.find(t => t.id === activeTab)?.label}
+                  </span>
+                  <span className="text-xs text-gray-500">Tap to change section</span>
+                </div>
+              </div>
+              <i className={`ri-arrow-${isMobileMenuOpen ? 'up' : 'down'}-s-line text-xl text-gray-400 group-hover:text-gray-600 transition-colors`}></i>
+            </button>
+            
+            {isMobileMenuOpen && (
+              <div className="border-t border-gray-100/50 bg-white/50 backdrop-blur-sm">
+                <div className="grid grid-cols-2 gap-2 p-3">
+                  {tabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => handleTabChange(tab.id as any)}
+                      className={`flex flex-col items-center justify-center p-4 rounded-xl transition-all duration-200 ${
+                        activeTab === tab.id
+                          ? `bg-${tab.color}-500 text-white shadow-lg shadow-${tab.color}-500/30`
+                          : 'bg-white text-gray-700 hover:bg-gray-50/80 shadow-sm border border-gray-100'
+                      }`}
+                    >
+                      <i className={`${tab.icon} text-xl mb-2 ${activeTab === tab.id ? 'text-white' : `text-${tab.color}-500`}`}></i>
+                      <span className="text-sm font-medium">{tab.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Desktop Navigation */}
+          <div className="hidden lg:block">
+            <nav className="flex px-6 justify-center">
+              {tabs.map((tab) => (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex items-center px-6 py-4 border-b-2 font-medium text-sm ${
+                  onClick={() => handleTabChange(tab.id as any)}
+                  className={`flex items-center gap-3 px-6 py-5 border-b-2 font-semibold text-sm transition-all duration-300 relative group ${
                     activeTab === tab.id
-                      ? 'border-green-500 text-green-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? `border-${tab.color}-500 text-${tab.color}-600 bg-gradient-to-r from-${tab.color}-50/50 to-transparent`
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50/50'
                   }`}
                 >
-                  <i className={`${tab.icon} mr-2`}></i>
-                  {tab.label}
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
+                    activeTab === tab.id 
+                      ? `bg-${tab.color}-500 text-white shadow-lg shadow-${tab.color}-500/30` 
+                      : `bg-${tab.color}-100 text-${tab.color}-500 group-hover:bg-${tab.color}-500 group-hover:text-white`
+                  }`}>
+                    <i className={`${tab.icon} text-sm`}></i>
+                  </div>
+                  <span>{tab.label}</span>
+                  
+                  {activeTab === tab.id && (
+                    <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-12 h-0.5 bg-gradient-to-r from-transparent via-current to-transparent opacity-50"></div>
+                  )}
                 </button>
               ))}
             </nav>
           </div>
+        </div>
 
-          {/* Tab Content */}
-          <div className="p-6">
+        {/* Enhanced Content Area */}
+        <div className="bg-white/80 backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-xl border border-white/50 overflow-hidden">
+          <div className="sm:p-2 lg:p-8">
             {/* General Settings */}
             {activeTab === 'general' && (
-              <div className="space-y-8">
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Restaurant Information</h3>
+              <div className="space-y-6 sm:space-y-8">
+                {/* Restaurant Information Card */}
+                <div className="bg-gradient-to-br from-blue-50/50 to-indigo-50/30 rounded-2xl p-2 sm:p-8 border border-blue-100/50">
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
+                      <i className="ri-building-4-line text-white text-xl"></i>
+                    </div>
+                    <div>
+                      <h3 className="text-xl sm:text-2xl font-bold text-gray-900">Restaurant Information</h3>
+                      <p className="text-sm text-gray-600 mt-1">Basic details about your restaurant</p>
+                    </div>
+                  </div>
+                  
                   <form onSubmit={handleGeneralSubmit} className="space-y-6">
-                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Restaurant Name</label>
+                    <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
+                      <div className="space-y-2">
+                        <label className="block text-sm font-semibold text-gray-700 flex items-center gap-2">
+                          <i className="ri-restaurant-line text-blue-500"></i>
+                          Restaurant Name
+                        </label>
                         <input
                           type="text"
                           value={generalInfo.name || ''}
                           onChange={(e) => setGeneralInfo({ ...generalInfo, name: e.target.value })}
-                          className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                          className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-white/80 backdrop-blur-sm"
+                          placeholder="Your restaurant name"
                         />
                       </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Description</label>
+                      <div className="space-y-2">
+                        <label className="block text-sm font-semibold text-gray-700 flex items-center gap-2">
+                          <i className="ri-file-text-line text-blue-500"></i>
+                          Description
+                        </label>
                         <input
                           type="text"
                           value={generalInfo.description || ''}
                           onChange={(e) => setGeneralInfo({ ...generalInfo, description: e.target.value })}
-                          className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                          className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-white/80 backdrop-blur-sm"
+                          placeholder="Brief description"
                         />
                       </div>
                     </div>
 
-                    <div>
-                      <h4 className="text-md font-medium text-gray-900 mb-3">Contact Information</h4>
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Phone</label>
-                          <input
-                            type="tel"
-                            value={generalInfo.contact?.phone || ''}
-                            onChange={(e) => setGeneralInfo({
-                              ...generalInfo,
-                              contact: { 
-                                ...generalInfo.contact, 
-                                phone: e.target.value,
-                                email: generalInfo.contact?.email || '',
-                                website: generalInfo.contact?.website || ''
-                              }
-                            })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
+                    {/* Contact Information */}
+                    <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-2 border border-gray-100">
+                      <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-3">
+                        <div className="w-8 h-8 bg-gradient-to-br from-green-500 to-green-600 rounded-lg flex items-center justify-center">
+                          <i className="ri-phone-line text-white text-sm"></i>
                         </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Email</label>
-                          <input
-                            type="email"
-                            value={generalInfo.contact?.email || ''}
-                            onChange={(e) => setGeneralInfo({
-                              ...generalInfo,
-                              contact: { 
-                                ...generalInfo.contact, 
-                                email: e.target.value,
-                                phone: generalInfo.contact?.phone || '',
-                                website: generalInfo.contact?.website || ''
-                              }
-                            })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Website</label>
-                          <input
-                            type="url"
-                            value={generalInfo.contact?.website || ''}
-                            onChange={(e) => setGeneralInfo({
-                              ...generalInfo,
-                              contact: { 
-                                ...generalInfo.contact, 
-                                website: e.target.value,
-                                phone: generalInfo.contact?.phone || '',
-                                email: generalInfo.contact?.email || ''
-                              }
-                            })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
+                        Contact Information
+                      </h4>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {[
+                          { key: 'phone', label: 'Phone', icon: 'ri-phone-line', type: 'tel' },
+                          { key: 'email', label: 'Email', icon: 'ri-mail-line', type: 'email' },
+                          { key: 'website', label: 'Website', icon: 'ri-global-line', type: 'url' }
+                        ].map((field) => (
+                          <div key={field.key} className="space-y-2">
+                            <label className="block text-sm font-semibold text-gray-700 flex items-center gap-2">
+                              <i className={`${field.icon} text-green-500`}></i>
+                              {field.label}
+                            </label>
+                            <input
+                              type={field.type}
+                              value={generalInfo.contact?.[field.key as keyof typeof generalInfo.contact] || ''}
+                              onChange={(e) => setGeneralInfo({
+                                ...generalInfo,
+                                contact: { 
+                                  ...generalInfo.contact, 
+                                  [field.key]: e.target.value
+                                } as any
+                              })}
+                              className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 transition-all bg-white/80"
+                              placeholder={field.key === 'website' ? 'www.example.com' : field.key === 'phone' ? '+237 6 00 00 00 00' : 'email@example.com'}
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
 
-                    <div>
-                      <h4 className="text-md font-medium text-gray-900 mb-3">Address</h4>
+                    {/* Address Information */}
+                    <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-2 border border-gray-100">
+                      <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-3">
+                        <div className="w-8 h-8 bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg flex items-center justify-center">
+                          <i className="ri-map-pin-line text-white text-sm"></i>
+                        </div>
+                        Address Information
+                      </h4>
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">Street</label>
-                          <input
-                            type="text"
-                            value={generalInfo.address?.street || ''}
-                            onChange={(e) => setGeneralInfo({
-                              ...generalInfo,
-                              address: { 
-                                ...generalInfo.address, 
-                                street: e.target.value,
-                                city: generalInfo.address?.city || '',
-                                state: generalInfo.address?.state || '',
-                                zipCode: generalInfo.address?.zipCode || '',
-                                country: generalInfo.address?.country || ''
-                              }
-                            })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">City</label>
-                          <input
-                            type="text"
-                            value={generalInfo.address?.city || ''}
-                            onChange={(e) => setGeneralInfo({
-                              ...generalInfo,
-                              address: { 
-                                ...generalInfo.address, 
-                                city: e.target.value,
-                                street: generalInfo.address?.street || '',
-                                state: generalInfo.address?.state || '',
-                                zipCode: generalInfo.address?.zipCode || '',
-                                country: generalInfo.address?.country || ''
-                              }
-                            })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">State</label>
-                          <input
-                            type="text"
-                            value={generalInfo.address?.state || ''}
-                            onChange={(e) => setGeneralInfo({
-                              ...generalInfo,
-                              address: { 
-                                ...generalInfo.address, 
-                                state: e.target.value,
-                                street: generalInfo.address?.street || '',
-                                city: generalInfo.address?.city || '',
-                                zipCode: generalInfo.address?.zipCode || '',
-                                country: generalInfo.address?.country || ''
-                              }
-                            })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700">ZIP Code</label>
-                          <input
-                            type="text"
-                            value={generalInfo.address?.zipCode || ''}
-                            onChange={(e) => setGeneralInfo({
-                              ...generalInfo,
-                              address: { 
-                                ...generalInfo.address, 
-                                zipCode: e.target.value,
-                                street: generalInfo.address?.street || '',
-                                city: generalInfo.address?.city || '',
-                                state: generalInfo.address?.state || '',
-                                country: generalInfo.address?.country || ''
-                              }
-                            })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
-                        <div className="sm:col-span-2">
-                          <label className="block text-sm font-medium text-gray-700">Country</label>
-                          <input
-                            type="text"
-                            value={generalInfo.address?.country || ''}
-                            onChange={(e) => setGeneralInfo({
-                              ...generalInfo,
-                              address: { 
-                                ...generalInfo.address, 
-                                country: e.target.value,
-                                street: generalInfo.address?.street || '',
-                                city: generalInfo.address?.city || '',
-                                state: generalInfo.address?.state || '',
-                                zipCode: generalInfo.address?.zipCode || ''
-                              }
-                            })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
+                        {[
+                          { key: 'street', label: 'Street Address', icon: 'ri-road-map-line', fullWidth: true },
+                          { key: 'city', label: 'City', icon: 'ri-building-2-line' },
+                          { key: 'state', label: 'State/Province', icon: 'ri-government-line' },
+                          { key: 'zipCode', label: 'ZIP/Postal Code', icon: 'ri-map-pin-2-line' },
+                          { key: 'country', label: 'Country', icon: 'ri-earth-line' }
+                        ].map((field) => (
+                          <div key={field.key} className={field.fullWidth ? 'sm:col-span-2' : ''}>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                              <i className={`${field.icon} text-purple-500`}></i>
+                              {field.label}
+                            </label>
+                            <input
+                              type="text"
+                              value={generalInfo.address?.[field.key as keyof typeof generalInfo.address] || ''}
+                              onChange={(e) => setGeneralInfo({
+                                ...generalInfo,
+                                address: { 
+                                  ...generalInfo.address, 
+                                  [field.key]: e.target.value
+                                } as any
+                              })}
+                              className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all bg-white/80"
+                              placeholder={`Enter ${field.label.toLowerCase()}`}
+                            />
+                          </div>
+                        ))}
                       </div>
                     </div>
 
-                    <div className="flex justify-end">
+                    <div className="flex justify-end pt-4">
                       <button
                         type="submit"
                         disabled={isLoading}
-                        className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
+                        className="group bg-gradient-to-r from-blue-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40"
                       >
-                        {isLoading ? 'Saving...' : 'Save Changes'}
+                        {isLoading ? (
+                          <span className="flex items-center gap-2">
+                            <i className="ri-loader-4-line animate-spin"></i>
+                            Saving Changes...
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <i className="ri-save-line group-hover:scale-110 transition-transform"></i>
+                            Save Restaurant Info
+                          </span>
+                        )}
                       </button>
                     </div>
                   </form>
                 </div>
 
-                {/* Logo Upload */}
-                <div className="border-t pt-8">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Restaurant Logo</h3>
-                  <form onSubmit={handleLogoSubmit} className="flex items-center space-x-6">
-                    <div className="flex-shrink-0">
-                      <img
-                        src={logoPreview || '/api/placeholder/120/120'}
-                        alt="Logo preview"
-                        className="h-24 w-24 rounded-lg object-cover border border-gray-300"
-                      />
+                {/* Logo Upload Card */}
+                <div className="bg-gradient-to-br from-purple-50/50 to-pink-50/30 rounded-2xl p-6 sm:p-8 border border-purple-100/50">
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg">
+                      <i className="ri-image-2-line text-white text-xl"></i>
                     </div>
-                    <div className="flex-1">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleLogoChange}
-                        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">PNG, JPG, GIF up to 5MB</p>
+                    <div>
+                      <h3 className="text-xl sm:text-2xl font-bold text-gray-900">Restaurant Logo</h3>
+                      <p className="text-sm text-gray-600 mt-1">Upload your restaurant's logo</p>
                     </div>
-                    <button
-                      type="submit"
-                      disabled={!logoFile || isLoading}
-                      className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
-                    >
-                      {isLoading ? 'Uploading...' : 'Upload Logo'}
-                    </button>
+                  </div>
+                  
+                  <form onSubmit={handleLogoSubmit} className="space-y-6">
+                    <div className="bg-gradient-to-br from-white to-gray-50/50 border-2 border-dashed border-gray-300 rounded-2xl p-6 sm:p-8 hover:border-purple-300 transition-colors">
+                      <div className="flex flex-col sm:flex-row items-center gap-6">
+                        <div className="flex-shrink-0">
+                          <div className="relative">
+                            <img
+                              src={logoPreview || '/api/placeholder/120/120'}
+                              alt="Logo preview"
+                              className="h-24 w-24 sm:h-32 sm:w-32 rounded-2xl object-cover border-4 border-white shadow-2xl"
+                            />
+                            {logoPreview && (
+                              <div className="absolute -top-2 -right-2 w-8 h-8 bg-green-500 rounded-full flex items-center justify-center shadow-lg animate-pulse">
+                                <i className="ri-check-line text-white text-sm"></i>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex-1 text-center sm:text-left">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleLogoChange}
+                            id="logo-upload"
+                            className="hidden"
+                          />
+                          <label
+                            htmlFor="logo-upload"
+                            className="inline-flex items-center gap-3 bg-white border-2 border-gray-300 text-gray-700 px-6 py-4 rounded-xl font-semibold cursor-pointer hover:bg-gray-50 hover:border-purple-400 transition-all duration-300 shadow-sm hover:shadow-md"
+                          >
+                            <i className="ri-upload-cloud-2-line text-xl text-purple-500"></i>
+                            Choose Image
+                          </label>
+                          <div className="text-sm text-gray-500 mt-4 space-y-1">
+                            <p>• PNG, JPG, or GIF up to 5MB</p>
+                            <p>• Recommended: 512x512px or larger</p>
+                            <p>• Square format works best</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex justify-center lg:justify-end">
+                      <button
+                        type="submit"
+                        disabled={!logoFile || isLoading}
+                        className=" bg-blue-600 text-white px-8 py-4 rounded-xl transition duration-200 hover:bg-blue-700 "
+                      >
+                        {isLoading ? (
+                          <span className="flex items-center gap-2">
+                            <i className="ri-loader-4-line animate-spin"></i>
+                            Uploading Logo...
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <i className="ri-upload-line group-hover:scale-110 transition-transform"></i>
+                            Upload Logo
+                          </span>
+                        )}
+                      </button>
+                    </div>
                   </form>
                 </div>
               </div>
@@ -456,39 +523,48 @@ const AdminSettings: React.FC = () => {
 
             {/* Theme Settings */}
             {activeTab === 'theme' && (
-              <div className="space-y-8">
-                <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Theme Customization</h3>
+              <div className="space-y-6 sm:space-y-8">
+                <div className="bg-gradient-to-br from-pink-50/50 to-rose-50/30 rounded-2xl p-2 sm:p-8 border border-pink-100/50">
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-12 h-12 bg-gradient-to-br from-pink-500 to-rose-600 rounded-xl flex items-center justify-center shadow-lg">
+                      <i className="ri-palette-line text-white text-xl"></i>
+                    </div>
+                    <div>
+                      <h3 className="text-xl sm:text-2xl font-bold text-gray-900">Theme Customization</h3>
+                      <p className="text-sm text-gray-600 mt-1">Customize your restaurant's appearance</p>
+                    </div>
+                  </div>
                   
                   {/* Default Themes */}
                   <div className="mb-8">
-                    <h4 className="text-md font-medium text-gray-900 mb-3">Default Themes</h4>
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-3">
+                      Default Themes
+                    </h4>
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       {defaultThemes.map((theme, index) => (
                         <div
                           key={index}
                           onClick={() => applyTheme(theme)}
-                          className="border border-gray-200 rounded-lg p-4 cursor-pointer hover:border-green-500 transition-colors"
+                          className="group relative bg-white/80 backdrop-blur-sm border-2 border-gray-200 rounded-2xl p-5 cursor-pointer hover:border-pink-300 hover:shadow-xl transition-all duration-300 active:scale-95 overflow-hidden"
                         >
-                          <div className="flex items-center space-x-3 mb-3">
-                            <div
-                              className="w-6 h-6 rounded-full border border-gray-300"
-                              style={{ backgroundColor: theme.primaryColor }}
-                            ></div>
-                            <div
-                              className="w-6 h-6 rounded-full border border-gray-300"
-                              style={{ backgroundColor: theme.secondaryColor }}
-                            ></div>
-                            <div
-                              className="w-6 h-6 rounded-full border border-gray-300"
-                              style={{ backgroundColor: theme.accentColor }}
-                            ></div>
-                          </div>
-                          <div className="text-sm font-medium text-gray-900 capitalize">
-                            Theme {index + 1}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            Click to apply
+                          <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-br from-pink-50 to-transparent rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                          <div className="relative">
+                            <div className="flex items-center gap-2 mb-4">
+                              {[theme.primaryColor, theme.secondaryColor, theme.accentColor].map((color, i) => (
+                                <div
+                                  key={i}
+                                  className="w-8 h-8 rounded-lg border-2 border-white shadow-lg flex-shrink-0"
+                                  style={{ backgroundColor: color }}
+                                ></div>
+                              ))}
+                            </div>
+                            <div className="text-base font-bold text-gray-900">
+                              Theme {index + 1}
+                            </div>
+                            <div className="text-sm text-gray-500 mt-1 flex items-center gap-2">
+                              <i className="ri-cursor-line text-pink-500"></i>
+                              Click to preview
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -497,94 +573,66 @@ const AdminSettings: React.FC = () => {
 
                   {/* Custom Theme */}
                   <form onSubmit={handleThemeSubmit}>
-                    <h4 className="text-md font-medium text-gray-900 mb-3">Custom Theme</h4>
+                    <h4 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-3">
+                      <i className="ri-settings-3-line text-pink-500"></i>
+                      Create Custom Theme
+                    </h4>
                     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Primary Color
-                        </label>
-                        <div className="flex items-center space-x-3">
-                          <input
-                            type="color"
-                            value={themeSettings.primaryColor}
-                            onChange={(e) => setThemeSettings({
-                              ...themeSettings,
-                              primaryColor: e.target.value
-                            })}
-                            className="w-12 h-12 rounded border border-gray-300"
-                          />
-                          <input
-                            type="text"
-                            value={themeSettings.primaryColor}
-                            onChange={(e) => setThemeSettings({
-                              ...themeSettings,
-                              primaryColor: e.target.value
-                            })}
-                            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
+                      {[
+                        { key: 'primaryColor', label: 'Primary Color', icon: 'ri-brush-3-line', description: 'Main brand color' },
+                        { key: 'secondaryColor', label: 'Secondary Color', icon: 'ri-paint-brush-line', description: 'Supporting color' },
+                        { key: 'backgroundColor', label: 'Background', icon: 'ri-layout-line', description: 'Page background' },
+                        { key: 'textColor', label: 'Text Color', icon: 'ri-font-color', description: 'Main text color' },
+                        { key: 'accentColor', label: 'Accent Color', icon: 'ri-flashlight-line', description: 'Highlights & buttons' }
+                      ].map((item) => (
+                        <div key={item.key} className="bg-white/60 backdrop-blur-sm rounded-xl p-4 border border-gray-100">
+                          <label className="block text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                            <i className={`${item.icon} text-pink-500`}></i>
+                            {item.label}
+                          </label>
+                          <p className="text-xs text-gray-500 mb-3">{item.description}</p>
+                          <div className="flex items-center gap-3 bg-gray-50/50 rounded-lg p-2">
+                            <input
+                              type="color"
+                              value={themeSettings[item.key as keyof RestaurantTheme] || '#FFFFFF'}
+                              onChange={(e) => setThemeSettings({
+                                ...themeSettings,
+                                [item.key]: e.target.value
+                              })}
+                              className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg border-2 border-white shadow-md cursor-pointer flex-shrink-0"
+                            />
+                            <input
+                              type="text"
+                              value={themeSettings[item.key as keyof RestaurantTheme] || '#FFFFFF'}
+                              onChange={(e) => setThemeSettings({
+                                ...themeSettings,
+                                [item.key]: e.target.value
+                              })}
+                              className="flex-1 border-0 bg-transparent px-2 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-pink-300 rounded"
+                              placeholder="#FFFFFF"
+                            />
+                          </div>
                         </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Secondary Color
-                        </label>
-                        <div className="flex items-center space-x-3">
-                          <input
-                            type="color"
-                            value={themeSettings.secondaryColor}
-                            onChange={(e) => setThemeSettings({
-                              ...themeSettings,
-                              secondaryColor: e.target.value
-                            })}
-                            className="w-12 h-12 rounded border border-gray-300"
-                          />
-                          <input
-                            type="text"
-                            value={themeSettings.secondaryColor}
-                            onChange={(e) => setThemeSettings({
-                              ...themeSettings,
-                              secondaryColor: e.target.value
-                            })}
-                            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Background Color
-                        </label>
-                        <div className="flex items-center space-x-3">
-                          <input
-                            type="color"
-                            value={themeSettings.backgroundColor || '#FFFFFF'}
-                            onChange={(e) => setThemeSettings({
-                              ...themeSettings,
-                              backgroundColor: e.target.value
-                            })}
-                            className="w-12 h-12 rounded border border-gray-300"
-                          />
-                          <input
-                            type="text"
-                            value={themeSettings.backgroundColor || '#FFFFFF'}
-                            onChange={(e) => setThemeSettings({
-                              ...themeSettings,
-                              backgroundColor: e.target.value
-                            })}
-                            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                          />
-                        </div>
-                      </div>
+                      ))}
                     </div>
 
-                    <div className="mt-8 flex justify-end">
+                    <div className="mt-4 flex justify-end">
                       <button
                         type="submit"
                         disabled={isLoading}
-                        className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
+                        className="group bg-gradient-to-r from-blue-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40"
                       >
-                        {isLoading ? 'Saving...' : 'Save Theme'}
+                        {isLoading ? (
+                          <span className="flex items-center gap-2">
+                            <i className="ri-loader-4-line animate-spin"></i>
+                            Saving Theme...
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <i className="ri-save-line group-hover:scale-110 transition-transform"></i>
+                            Save Theme
+                          </span>
+                        )}
                       </button>
                     </div>
                   </form>
@@ -594,72 +642,142 @@ const AdminSettings: React.FC = () => {
 
             {/* Admin Settings */}
             {activeTab === 'admin' && (
-              <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Admin Settings</h3>
-                <form onSubmit={handleAdminSubmit} className="space-y-6 max-w-2xl">
-                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Email Address</label>
-                      <input
-                        type="email"
-                        value={adminInfo.email}
-                        onChange={(e) => setAdminInfo({ ...adminInfo, email: e.target.value })}
-                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Phone Number</label>
-                      <input
-                        type="tel"
-                        value={adminInfo.phone || ''}
-                        onChange={(e) => setAdminInfo({ ...adminInfo, phone: e.target.value })}
-                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-                      />
+              <div className="bg-gradient-to-br from-emerald-50/50 to-green-50/30 rounded-2xl p-6 sm:p-8 border border-emerald-100/50">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-12 h-12 bg-gradient-to-br from-emerald-500 to-green-600 rounded-xl flex items-center justify-center shadow-lg">
+                    <i className="ri-user-settings-line text-white text-xl"></i>
+                  </div>
+                  <div>
+                    <h3 className="text-xl sm:text-2xl font-bold text-gray-900">Admin Settings</h3>
+                    <p className="text-sm text-gray-600 mt-1">Manage your account information</p>
+                  </div>
+                </div>
+                
+                <form onSubmit={handleAdminSubmit} className="space-y-6 max-w-3xl">
+                  {/* Profile Information */}
+                  <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-100">
+                    <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-3">
+                      <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
+                        <i className="ri-user-line text-white text-sm"></i>
+                      </div>
+                      Profile Information
+                    </h4>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                          <i className="ri-user-3-line text-blue-500"></i>
+                          Full Name
+                        </label>
+                        <input
+                          type="text"
+                          value={adminInfo.name || ''}
+                          onChange={(e) => setAdminInfo({ ...adminInfo, name: e.target.value })}
+                          className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-white/80"
+                          placeholder="Enter your full name"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                            <i className="ri-mail-line text-blue-500"></i>
+                            Email Address
+                          </label>
+                          <input
+                            type="email"
+                            value={adminInfo.email}
+                            onChange={(e) => setAdminInfo({ ...adminInfo, email: e.target.value })}
+                            className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-white/80"
+                            placeholder="admin@restaurant.com"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                            <i className="ri-phone-line text-blue-500"></i>
+                            Phone Number
+                          </label>
+                          <input
+                            type="tel"
+                            value={adminInfo.phone || ''}
+                            onChange={(e) => setAdminInfo({ ...adminInfo, phone: e.target.value })}
+                            className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-white/80"
+                            placeholder="+237 6 00 00 00 00"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="border-t pt-6">
-                    <h4 className="text-md font-medium text-gray-900 mb-4">Change Password</h4>
+                  {/* Password Change */}
+                  <div className="bg-white/60 backdrop-blur-sm rounded-2xl p-6 border border-gray-100">
+                    <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-3">
+                      <div className="w-8 h-8 bg-gradient-to-br from-amber-500 to-orange-600 rounded-lg flex items-center justify-center">
+                        <i className="ri-lock-password-line text-white text-sm"></i>
+                      </div>
+                      Change Password
+                    </h4>
                     <div className="space-y-4">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700">Current Password</label>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                          <i className="ri-key-2-line text-amber-500"></i>
+                          Current Password
+                        </label>
                         <input
                           type="password"
                           value={adminInfo.currentPassword || ''}
                           onChange={(e) => setAdminInfo({ ...adminInfo, currentPassword: e.target.value })}
-                          className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                          className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all bg-white/80"
+                          placeholder="Enter current password"
                         />
                       </div>
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700">New Password</label>
+                          <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                            <i className="ri-key-line text-amber-500"></i>
+                            New Password
+                          </label>
                           <input
                             type="password"
                             value={adminInfo.newPassword || ''}
                             onChange={(e) => setAdminInfo({ ...adminInfo, newPassword: e.target.value })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                            className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all bg-white/80"
+                            placeholder="Enter new password"
                           />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-gray-700">Confirm New Password</label>
+                          <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                            <i className="ri-shield-keyhole-line text-amber-500"></i>
+                            Confirm New Password
+                          </label>
                           <input
                             type="password"
                             value={adminInfo.confirmPassword || ''}
                             onChange={(e) => setAdminInfo({ ...adminInfo, confirmPassword: e.target.value })}
-                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                            className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition-all bg-white/80"
+                            placeholder="Confirm new password"
                           />
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex justify-end">
+                  <div className="flex justify-end pt-4">
                     <button
                       type="submit"
                       disabled={isLoading}
-                      className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
+                      className="group bg-gradient-to-r from-emerald-500 to-green-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-emerald-600 hover:to-green-700 focus:outline-none focus:ring-4 focus:ring-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg shadow-emerald-500/30 hover:shadow-xl hover:shadow-emerald-500/40"
                     >
-                      {isLoading ? 'Saving...' : 'Save Changes'}
+                      {isLoading ? (
+                        <span className="flex items-center gap-2">
+                          <i className="ri-loader-4-line animate-spin"></i>
+                          Saving Changes...
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-2">
+                          <i className="ri-save-line group-hover:scale-110 transition-transform"></i>
+                          Save Admin Settings
+                        </span>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -668,64 +786,102 @@ const AdminSettings: React.FC = () => {
 
             {/* Preview */}
             {activeTab === 'preview' && (
-              <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Menu Preview</h3>
-                <p className="text-gray-600 mb-6">
-                  This is how your menu will appear to customers with the current theme.
-                </p>
+              <div className="bg-gradient-to-br from-amber-50/50 to-orange-50/30 rounded-2xl  sm:p-2 border border-amber-100/50">
+                <div className="flex items-center gap-4 mb-6 p-6 pb-0">
+                  <div className="w-12 h-12 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl flex items-center justify-center shadow-lg">
+                    <i className="ri-eye-line text-white text-xl"></i>
+                  </div>
+                  <div>
+                    <h3 className="text-xl sm:text-2xl font-bold text-gray-900">Menu Preview</h3>
+                    <p className="w-full text-sm text-gray-600 mt-1">See how your menu looks to customers</p>
+                  </div>
+                </div>
                 
                 {/* Menu Preview Component */}
-                <div 
-                  className="border border-gray-300 rounded-xl p-6 max-w-2xl mx-auto"
-                  style={{ 
-                    backgroundColor: themeSettings.backgroundColor || '#FFFFFF',
-                    color: themeSettings.textColor || '#1F2937'
-                  }}
-                >
-                  {/* Menu Header */}
-                  <div className="text-center mb-8">
-                    {logoPreview && (
-                      <img
-                        src={logoPreview}
-                        alt="Restaurant Logo"
-                        className="h-16 w-16 mx-auto mb-4 rounded-lg object-cover"
-                      />
-                    )}
-                    <h1 
-                      className="text-3xl font-bold mb-2"
-                      style={{ color: themeSettings.primaryColor }}
-                    >
-                      {generalInfo.name}
-                    </h1>
-                    <p className="text-lg opacity-75">{generalInfo.description}</p>
-                  </div>
+                <div className="bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-2xl p-2 sm:p-6 lg:p-8">
+                  <div 
+                    className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 lg:p-10 max-w-3xl mx-auto border-2 backdrop-blur-sm"
+                    style={{ 
+                      backgroundColor: themeSettings.backgroundColor || '#FFFFFF',
+                      color: themeSettings.textColor || '#1F2937',
+                      borderColor: themeSettings.primaryColor + '20'
+                    }}
+                  >
+                    {/* Menu Header */}
+                    <div className="text-center mb-8 sm:mb-10">
+                      {logoPreview && (
+                        <div className="mb-5">
+                          <img
+                            src={logoPreview}
+                            alt="Restaurant Logo"
+                            className="h-16 w-16 sm:h-20 sm:w-20 mx-auto rounded-2xl object-cover shadow-lg ring-4 ring-white/50"
+                          />
+                        </div>
+                      )}
+                      <h1 
+                        className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-2 sm:mb-3"
+                        style={{ color: themeSettings.primaryColor }}
+                      >
+                        {generalInfo.name || 'Restaurant Name'}
+                      </h1>
+                      <p className="text-base sm:text-lg opacity-75 max-w-xl mx-auto">
+                        {generalInfo.description || 'Your restaurant description appears here'}
+                      </p>
+                    </div>
 
-                  {/* Menu Categories */}
-                  <div className="space-y-6">
-                    {/* Sample Category */}
+                    {/* Divider */}
+                    <div 
+                      className="h-1 rounded-full mb-8 sm:mb-10 opacity-50"
+                      style={{ 
+                        background: `linear-gradient(90deg, transparent, ${themeSettings.secondaryColor}, transparent)` 
+                      }}
+                    ></div>
+
+                    {/* Menu Section */}
                     <div>
                       <h2 
-                        className="text-xl font-semibold mb-4 pb-2 border-b"
-                        style={{ borderColor: themeSettings.secondaryColor }}
+                        className="text-xl sm:text-2xl font-bold mb-5 flex items-center gap-3"
+                        style={{ color: themeSettings.secondaryColor }}
                       >
-                        Appetizers
+                        <div 
+                          className="w-8 h-8 rounded-lg flex items-center justify-center"
+                          style={{ backgroundColor: themeSettings.primaryColor + '15' }}
+                        >
+                          <i className="ri-restaurant-2-line" style={{ color: themeSettings.primaryColor }}></i>
+                        </div>
+                        Featured Appetizers
                       </h2>
                       
                       {/* Sample Menu Items */}
-                      <div className="space-y-4">
+                      <div className="space-y-4 sm:space-y-5">
                         {[
-                          { name: 'Garlic Bread', price: '$5.99', description: 'Freshly baked with garlic butter' },
-                          { name: 'Bruschetta', price: '$7.99', description: 'Tomato, basil, and mozzarella on toasted bread' },
-                          { name: 'Calamari', price: '$9.99', description: 'Crispy fried squid with marinara sauce' }
+                          { name: 'Garlic Bread', price: '$5.99', description: 'Freshly baked with garlic butter and herbs', icon: 'ri-bread-line' },
+                          { name: 'Bruschetta', price: '$7.99', description: 'Tomato, basil, and mozzarella on toasted bread', icon: 'ri-plant-line' },
+                          { name: 'Calamari', price: '$9.99', description: 'Crispy fried squid with marinara sauce', icon: 'ri-fish-line' }
                         ].map((item, index) => (
-                          <div key={index} className="flex justify-between items-start py-2">
-                            <div>
-                              <h3 className="font-medium">{item.name}</h3>
-                              <p className="text-sm opacity-75 mt-1">{item.description}</p>
+                          <div 
+                            key={index} 
+                            className="flex justify-between items-start gap-4 p-4 rounded-xl hover:shadow-md transition-all duration-300 group"
+                            style={{ backgroundColor: themeSettings.primaryColor + '08' }}
+                          >
+                            <div className="flex gap-3 flex-1 min-w-0">
+                              <div 
+                                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 mt-1 group-hover:scale-110 transition-transform"
+                                style={{ backgroundColor: themeSettings.primaryColor + '20' }}
+                              >
+                                <i className={item.icon} style={{ color: themeSettings.primaryColor }}></i>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h3 className="font-bold text-base sm:text-lg truncate">{item.name}</h3>
+                                <p className="text-sm opacity-75 mt-1 line-clamp-2">{item.description}</p>
+                              </div>
                             </div>
                             <span 
-                              className="font-semibold whitespace-nowrap ml-4"
-                              style={{ color: themeSettings.accentColor || themeSettings.primaryColor }}
+                              className="font-bold text-lg sm:text-xl whitespace-nowrap flex-shrink-0 px-3 py-1 rounded-lg group-hover:scale-105 transition-transform"
+                              style={{ 
+                                color: themeSettings.accentColor || themeSettings.primaryColor,
+                                backgroundColor: (themeSettings.accentColor || themeSettings.primaryColor) + '15'
+                              }}
                             >
                               {item.price}
                             </span>
@@ -736,16 +892,34 @@ const AdminSettings: React.FC = () => {
 
                     {/* Call to Action */}
                     <div 
-                      className="mt-8 p-4 rounded-lg text-center"
+                      className="mt-8 sm:mt-10 p-5 sm:p-6 rounded-2xl text-center shadow-lg backdrop-blur-sm"
                       style={{ 
-                        backgroundColor: themeSettings.primaryColor,
+                        background: `linear-gradient(135deg, ${themeSettings.primaryColor}, ${themeSettings.secondaryColor})`,
                         color: 'white'
                       }}
                     >
-                      <p className="font-semibold">Visit us today to enjoy our delicious food!</p>
-                      <p className="text-sm opacity-90 mt-1">
-                        {generalInfo.contact?.phone} • {generalInfo.contact?.email}
-                      </p>
+                      <i className="ri-restaurant-line text-3xl mb-3 block opacity-90"></i>
+                      <p className="font-bold text-base sm:text-lg mb-2">Visit us today for an unforgettable experience!</p>
+                      <div className="text-sm sm:text-base opacity-95 space-y-1">
+                        {generalInfo.contact?.phone && (
+                          <p className="flex items-center justify-center gap-2">
+                            <i className="ri-phone-line"></i>
+                            {generalInfo.contact.phone}
+                          </p>
+                        )}
+                        {generalInfo.contact?.email && (
+                          <p className="flex items-center justify-center gap-2 break-all">
+                            <i className="ri-mail-line"></i>
+                            {generalInfo.contact.email}
+                          </p>
+                        )}
+                        {generalInfo.contact?.website && (
+                          <p className="flex items-center justify-center gap-2 break-all">
+                            <i className="ri-global-line"></i>
+                            {generalInfo.contact.website}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -758,5 +932,4 @@ const AdminSettings: React.FC = () => {
   );
 };
 
-const AdminSettingsComponent = AdminSettings;
-export default AdminSettingsComponent;
+export default Settings;
