@@ -952,7 +952,81 @@ app.get('/api/protected-test', auth, (req, res) => {
     }
   });
 });
+// ============================================================================
+// PUBLIC CATEGORIES ENDPOINTS
+// ============================================================================
 
+// Get all unique categories for public restaurant directory
+app.get('/api/public/categories', async (req, res) => {
+  try {
+    console.log('📁 Fetching unique categories for public directory');
+    
+    // Get all active categories
+    const allCategories = await Category.find({ isActive: true })
+      .select('name description isPredefined')
+      .sort('name');
+
+    // Use a Map to get unique category names (keeping the first occurrence)
+    const uniqueCategoriesMap = new Map();
+    
+    allCategories.forEach(category => {
+      if (!uniqueCategoriesMap.has(category.name)) {
+        uniqueCategoriesMap.set(category.name, {
+          id: category._id.toString(),
+          name: category.name,
+          description: category.description,
+          isPredefined: category.isPredefined
+        });
+      }
+    });
+
+    const uniqueCategories = Array.from(uniqueCategoriesMap.values())
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    console.log(`✅ Found ${uniqueCategories.length} unique categories from ${allCategories.length} total`);
+    
+    res.json({
+      message: 'Unique categories retrieved successfully',
+      categories: uniqueCategories
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch unique categories:', error);
+    res.status(500).json({ error: 'Failed to fetch categories', details: error.message });
+  }
+});
+
+// Get restaurants by category name (public)
+app.get('/api/public/restaurants/by-category/:categoryName', async (req, res) => {
+  try {
+    const { categoryName } = req.params;
+    
+    console.log(`🔍 Finding restaurants with category: ${categoryName}`);
+    
+    // Find all categories with this name
+    const matchingCategories = await Category.find({ 
+      name: categoryName,
+      isActive: true 
+    }).select('restaurant');
+
+    const restaurantIds = matchingCategories.map(cat => cat.restaurant);
+    
+    // Get the restaurants
+    const restaurants = await Restaurant.find({
+      _id: { $in: restaurantIds },
+      isActive: true
+    }).select('-__v');
+
+    console.log(`✅ Found ${restaurants.length} restaurants with category "${categoryName}"`);
+    
+    res.json({
+      message: `Restaurants with category "${categoryName}" retrieved successfully`,
+      restaurants
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurants by category:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurants', details: error.message });
+  }
+});
 // List all available routes
 app.get('/api', (req, res) => {
   const routes = [

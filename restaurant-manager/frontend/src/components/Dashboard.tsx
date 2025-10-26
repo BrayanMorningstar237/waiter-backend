@@ -277,7 +277,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ pendingOrdersCount 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Welcome Banner */}
-      <div className="relative overflow-hidden bg-gradient-to-br from-green-500 via-green-600 to-emerald-600 rounded-2xl p-6 md:p-8 text-white shadow-xl">
+      <div className="relative overflow-hidden bg-gradient-to-br from-green-500 via-green-600 to-emerald-600 lg:rounded-2xl rounded-b-2xl p-6 md:p-8 text-white shadow-xl">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -translate-y-32 translate-x-32 blur-3xl"></div>
         <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-600/30 rounded-full translate-y-32 -translate-x-32 blur-3xl"></div>
         

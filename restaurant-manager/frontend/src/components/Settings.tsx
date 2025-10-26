@@ -43,6 +43,10 @@ const Settings: React.FC = () => {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState('');
 
+  // Track current theme from restaurant and selected theme
+  const [currentTheme, setCurrentTheme] = useState<RestaurantTheme | null>(null);
+  const [selectedThemeIndex, setSelectedThemeIndex] = useState<number | null>(null);
+
   const handleTabChange = (tab: 'general' | 'theme' | 'admin' | 'preview') => {
     setActiveTab(tab);
     localStorage.setItem('settings-active-tab', tab);
@@ -68,14 +72,24 @@ const Settings: React.FC = () => {
         }
       });
       
-      setThemeSettings(restaurant.theme || {
+      const restaurantTheme = restaurant.theme || {
         primaryColor: '#3B82F6',
         secondaryColor: '#1E40AF',
         backgroundColor: '#FFFFFF',
         textColor: '#1F2937',
         accentColor: '#10B981'
-      });
+      };
+      
+      setThemeSettings(restaurantTheme);
+      setCurrentTheme(restaurantTheme);
       setLogoPreview(restaurant.logo || '');
+
+      // Find if current theme matches any default theme
+      const matchingThemeIndex = defaultThemes.findIndex(theme => 
+        theme.primaryColor === restaurantTheme.primaryColor &&
+        theme.secondaryColor === restaurantTheme.secondaryColor
+      );
+      setSelectedThemeIndex(matchingThemeIndex !== -1 ? matchingThemeIndex : null);
     }
 
     if (user) {
@@ -136,6 +150,7 @@ const Settings: React.FC = () => {
     
     try {
       await updateRestaurantSettings({ theme: themeSettings });
+      setCurrentTheme(themeSettings);
       showSuccess('Theme updated successfully');
     } catch (error: any) {
       showError(error.message || 'Failed to update theme');
@@ -172,9 +187,22 @@ const Settings: React.FC = () => {
     }
   };
 
-  const applyTheme = (theme: RestaurantTheme) => {
+  const applyTheme = (theme: RestaurantTheme, index: number) => {
     setThemeSettings(theme);
-    showSuccess('Theme applied! Click "Save Theme" to confirm.');
+    setSelectedThemeIndex(index);
+    showSuccess('Theme preview applied! Click "Save Theme" to confirm.');
+  };
+
+  // Check if current theme settings match the saved theme
+  const isThemeChanged = () => {
+    if (!currentTheme) return false;
+    return (
+      currentTheme.primaryColor !== themeSettings.primaryColor ||
+      currentTheme.secondaryColor !== themeSettings.secondaryColor ||
+      currentTheme.backgroundColor !== themeSettings.backgroundColor ||
+      currentTheme.textColor !== themeSettings.textColor ||
+      currentTheme.accentColor !== themeSettings.accentColor
+    );
   };
 
   if (!restaurant || !user) {
@@ -193,8 +221,8 @@ const Settings: React.FC = () => {
 
   const tabs = [
     { id: 'general', label: 'General', icon: 'ri-building-4-line', color: 'blue' },
-    { id: 'theme', label: 'Appearance', icon: 'ri-palette-line', color: 'purple' },
     { id: 'admin', label: 'Admin', icon: 'ri-user-settings-line', color: 'green' },
+    { id: 'theme', label: 'Appearance', icon: 'ri-palette-line', color: 'purple' },
     { id: 'preview', label: 'Preview', icon: 'ri-eye-line', color: 'orange' }
   ];
 
@@ -392,34 +420,73 @@ const Settings: React.FC = () => {
                         Address Information
                       </h4>
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                        {[
-                          { key: 'street', label: 'Street Address', icon: 'ri-road-map-line', fullWidth: true },
-                          { key: 'city', label: 'City', icon: 'ri-building-2-line' },
-                          { key: 'state', label: 'State/Province', icon: 'ri-government-line' },
-                          { key: 'zipCode', label: 'ZIP/Postal Code', icon: 'ri-map-pin-2-line' },
-                          { key: 'country', label: 'Country', icon: 'ri-earth-line' }
-                        ].map((field) => (
-                          <div key={field.key} className={field.fullWidth ? 'sm:col-span-2' : ''}>
-                            <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                              <i className={`${field.icon} text-purple-500`}></i>
-                              {field.label}
-                            </label>
-                            <input
-                              type="text"
-                              value={generalInfo.address?.[field.key as keyof typeof generalInfo.address] || ''}
-                              onChange={(e) => setGeneralInfo({
-                                ...generalInfo,
-                                address: { 
-                                  ...generalInfo.address, 
-                                  [field.key]: e.target.value
-                                } as any
-                              })}
-                              className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all bg-white/80"
-                              placeholder={`Enter ${field.label.toLowerCase()}`}
-                            />
-                          </div>
-                        ))}
-                      </div>
+  {[
+    { key: 'street', label: 'Street Address', icon: 'ri-road-map-line', fullWidth: true },
+    { key: 'city', label: 'City', icon: 'ri-building-2-line' },
+    { key: 'state', label: 'Region', icon: 'ri-government-line' }, // ✅ renamed label only
+    { key: 'zipCode', label: 'Postal Code', icon: 'ri-map-pin-2-line' },
+    { key: 'country', label: 'Country', icon: 'ri-earth-line' }
+  ].map((field) => (
+    <div key={field.key} className={field.fullWidth ? 'sm:col-span-2' : ''}>
+      <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+        <i className={`${field.icon} text-purple-500`}></i>
+        {field.label}
+      </label>
+
+      {/* ✅ Region dropdown for the 'state' key */}
+      {field.key === 'state' ? (
+        <select
+          value={generalInfo.address?.state || ''} // ✅ shows current region from backend
+          onChange={(e) =>
+            setGeneralInfo({
+              ...generalInfo,
+              address: {
+                ...generalInfo.address,
+                state: e.target.value
+              } as any
+            })
+          }
+          className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all bg-white/80"
+        >
+          <option value="">Select Region</option>
+          {[
+            'Adamawa',
+            'Centre',
+            'East',
+            'Far North',
+            'Littoral',
+            'North',
+            'North West',
+            'South',
+            'South West',
+            'West'
+          ].map((region) => (
+            <option key={region} value={region}>
+              {region}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          type="text"
+          value={generalInfo.address?.[field.key as keyof typeof generalInfo.address] || ''}
+          onChange={(e) =>
+            setGeneralInfo({
+              ...generalInfo,
+              address: {
+                ...generalInfo.address,
+                [field.key]: e.target.value
+              } as any
+            })
+          }
+          className="block w-full border-2 border-gray-200 rounded-xl px-4 py-3.5 text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all bg-white/80"
+          placeholder={`Enter ${field.label.toLowerCase()}`}
+        />
+      )}
+    </div>
+  ))}
+</div>
+
                     </div>
 
                     <div className="flex justify-end pt-4">
@@ -534,40 +601,98 @@ const Settings: React.FC = () => {
                       <p className="text-sm text-gray-600 mt-1">Customize your restaurant's appearance</p>
                     </div>
                   </div>
+
+                  {/* Theme Status Banner */}
+                  {isThemeChanged() && (
+                    <div className="mb-6 bg-gradient-to-r from-yellow-50 to-amber-50 border border-amber-200 rounded-2xl p-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center">
+                          <i className="ri-information-line text-white text-sm"></i>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-amber-800">Theme Preview Active</p>
+                          <p className="text-sm text-amber-700">You have unsaved theme changes. Click "Save Theme" to apply them.</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Default Themes */}
                   <div className="mb-8">
-                    <h4 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-3">
-                      Default Themes
-                    </h4>
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-lg font-bold text-gray-900 flex items-center gap-3">
+                        Default Themes
+                      </h4>
+                      {currentTheme && (
+                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                          <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                          <span>Current Theme</span>
+                          <div className="w-3 h-3 rounded-full bg-blue-500 ml-3"></div>
+                          <span>Selected</span>
+                        </div>
+                      )}
+                    </div>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      {defaultThemes.map((theme, index) => (
-                        <div
-                          key={index}
-                          onClick={() => applyTheme(theme)}
-                          className="group relative bg-white/80 backdrop-blur-sm border-2 border-gray-200 rounded-2xl p-5 cursor-pointer hover:border-pink-300 hover:shadow-xl transition-all duration-300 active:scale-95 overflow-hidden"
-                        >
-                          <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-br from-pink-50 to-transparent rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                          <div className="relative">
-                            <div className="flex items-center gap-2 mb-4">
-                              {[theme.primaryColor, theme.secondaryColor, theme.accentColor].map((color, i) => (
-                                <div
-                                  key={i}
-                                  className="w-8 h-8 rounded-lg border-2 border-white shadow-lg flex-shrink-0"
-                                  style={{ backgroundColor: color }}
-                                ></div>
-                              ))}
+                      {defaultThemes.map((theme, index) => {
+                        const isCurrentTheme = currentTheme && 
+                          currentTheme.primaryColor === theme.primaryColor &&
+                          currentTheme.secondaryColor === theme.secondaryColor;
+                        const isSelected = selectedThemeIndex === index;
+                        
+                        return (
+                          <div
+                            key={index}
+                            onClick={() => applyTheme(theme, index)}
+                            className={`group relative bg-white/80 backdrop-blur-sm border-2 rounded-2xl p-5 cursor-pointer transition-all duration-300 active:scale-95 overflow-hidden ${
+                              isCurrentTheme 
+                                ? 'border-green-500 shadow-lg shadow-green-500/20' 
+                                : isSelected
+                                ? 'border-blue-500 shadow-lg shadow-blue-500/20'
+                                : 'border-gray-200 hover:border-pink-300 hover:shadow-xl'
+                            }`}
+                          >
+                            {/* Status Indicators */}
+                            <div className="absolute top-3 right-3 flex gap-1">
+                              {isCurrentTheme && (
+                                <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center shadow-lg">
+                                  <i className="ri-check-line text-white text-xs"></i>
+                                </div>
+                              )}
+                              {isSelected && !isCurrentTheme && (
+                                <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center shadow-lg">
+                                  <i className="ri-arrow-right-line text-white text-xs"></i>
+                                </div>
+                              )}
                             </div>
-                            <div className="text-base font-bold text-gray-900">
-                              Theme {index + 1}
-                            </div>
-                            <div className="text-sm text-gray-500 mt-1 flex items-center gap-2">
-                              <i className="ri-cursor-line text-pink-500"></i>
-                              Click to preview
+
+                            <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-br from-pink-50 to-transparent rounded-bl-full opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                            <div className="relative">
+                              <div className="flex items-center gap-2 mb-4">
+                                {[theme.primaryColor, theme.secondaryColor, theme.accentColor].map((color, i) => (
+                                  <div
+                                    key={i}
+                                    className="w-8 h-8 rounded-lg border-2 border-white shadow-lg flex-shrink-0"
+                                    style={{ backgroundColor: color }}
+                                  ></div>
+                                ))}
+                              </div>
+                              <div className="text-base font-bold text-gray-900 flex items-center gap-2">
+                                Theme {index + 1}
+                                {isCurrentTheme && (
+                                  <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">Active</span>
+                                )}
+                                {isSelected && !isCurrentTheme && (
+                                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">Selected</span>
+                                )}
+                              </div>
+                              <div className="text-sm text-gray-500 mt-1 flex items-center gap-2">
+                                <i className="ri-cursor-line text-pink-500"></i>
+                                {isCurrentTheme ? 'Currently active' : 'Click to preview'}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -595,19 +720,25 @@ const Settings: React.FC = () => {
                             <input
                               type="color"
                               value={themeSettings[item.key as keyof RestaurantTheme] || '#FFFFFF'}
-                              onChange={(e) => setThemeSettings({
-                                ...themeSettings,
-                                [item.key]: e.target.value
-                              })}
+                              onChange={(e) => {
+                                setThemeSettings({
+                                  ...themeSettings,
+                                  [item.key]: e.target.value
+                                });
+                                setSelectedThemeIndex(null); // Clear selected theme when customizing
+                              }}
                               className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg border-2 border-white shadow-md cursor-pointer flex-shrink-0"
                             />
                             <input
                               type="text"
                               value={themeSettings[item.key as keyof RestaurantTheme] || '#FFFFFF'}
-                              onChange={(e) => setThemeSettings({
-                                ...themeSettings,
-                                [item.key]: e.target.value
-                              })}
+                              onChange={(e) => {
+                                setThemeSettings({
+                                  ...themeSettings,
+                                  [item.key]: e.target.value
+                                });
+                                setSelectedThemeIndex(null); // Clear selected theme when customizing
+                              }}
                               className="flex-1 border-0 bg-transparent px-2 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-pink-300 rounded"
                               placeholder="#FFFFFF"
                             />
@@ -616,11 +747,15 @@ const Settings: React.FC = () => {
                       ))}
                     </div>
 
-                    <div className="mt-4 flex justify-end">
+                    <div className="mt-4 flex justify-center lg:justify-end">
                       <button
                         type="submit"
-                        disabled={isLoading}
-                        className="group bg-gradient-to-r from-blue-500 to-blue-600 text-white px-8 py-4 rounded-xl font-semibold hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40"
+                        disabled={isLoading || !isThemeChanged()}
+                        className={`group px-8 py-4 rounded-xl font-semibold focus:outline-none focus:ring-4 transition-all duration-300 shadow-lg hover:shadow-xl ${
+                          isThemeChanged()
+                            ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 shadow-blue-500/30 hover:shadow-blue-500/40'
+                            : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        }`}
                       >
                         {isLoading ? (
                           <span className="flex items-center gap-2">
@@ -630,7 +765,7 @@ const Settings: React.FC = () => {
                         ) : (
                           <span className="flex items-center gap-2">
                             <i className="ri-save-line group-hover:scale-110 transition-transform"></i>
-                            Save Theme
+                            {isThemeChanged() ? 'Save Theme Changes' : 'No Changes to Save'}
                           </span>
                         )}
                       </button>
@@ -666,7 +801,7 @@ const Settings: React.FC = () => {
                       <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
                           <i className="ri-user-3-line text-blue-500"></i>
-                          Full Name
+                          Admin Name
                         </label>
                         <input
                           type="text"

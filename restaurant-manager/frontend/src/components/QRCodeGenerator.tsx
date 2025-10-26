@@ -28,7 +28,7 @@ const QRCodeGenerator: React.FC = () => {
 
   useEffect(() => {
     loadMenuData();
-    setBaseUrl(`${window.location.origin}/order`);
+    setBaseUrl(`${window.location.origin}/waiter`);
   }, []);
 
   const loadMenuData = async () => {
@@ -112,7 +112,7 @@ const QRCodeGenerator: React.FC = () => {
         const item = menuItems.find(m => m.id === selectedItem);
         if (!item) return;
         params.append('item', item.id);
-        url = `${baseUrl}?${params.toString()}`;
+        url = `${baseUrl}?${params.toString()}/waiter`;
         name = `${item.name} (Table ${tableNumber})`;
         type = 'item';
         break;

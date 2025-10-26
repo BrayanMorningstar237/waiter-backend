@@ -1,9 +1,12 @@
+// src/App.tsx
 import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ToastProvider } from './contexts/ToastContext';
+
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
-import { ToastProvider } from './contexts/ToastContext';
-import { BrowserRouter as Router } from 'react-router-dom';
+import CustomerRoutes from './routes/CustomerRoutes';
 
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -19,17 +22,29 @@ const AppContent: React.FC = () => {
     );
   }
 
-  return isAuthenticated ? <Dashboard /> : <Login />;
+  return (
+    <Routes>
+      {/* Customer-facing routes */}
+      <Route path="/waiter/*" element={<CustomerRoutes />} />
+
+      {/* Authenticated dashboard routes */}
+      {isAuthenticated ? (
+        <Route path="/*" element={<Dashboard />} />
+      ) : (
+        <Route path="/*" element={<Login />} />
+      )}
+    </Routes>
+  );
 };
 
 const App: React.FC = () => {
   return (
     <Router>
-    <ToastProvider>
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
-    </ToastProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </ToastProvider>
     </Router>
   );
 };

@@ -206,7 +206,7 @@ const MenuManagement: React.FC = () => {
     <div className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-2  space-y-6">
 
   {/* Header */}
-  <div className="bg-gradient-to-r from-green-600 via-green-500 to-green-600 rounded-2xl sm:rounded-3xl overflow-hidden">
+  <div className="bg-gradient-to-r from-green-600 via-green-500 to-green-600 lg:rounded-2xl rounded-b-2xl sm:rounded-3xl overflow-hidden">
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-6 lg:p-8">
       
       {/* Title Section */}
