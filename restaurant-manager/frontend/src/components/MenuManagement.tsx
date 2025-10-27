@@ -353,7 +353,7 @@ const MenuManagement: React.FC = () => {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 sm:gap-6">
+        <div className="grid p-4 lg:p-0 grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 sm:gap-6">
           {filteredItems.map(item => (
             <MenuItemCard
               key={item.id}
@@ -433,7 +433,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, onEdit, onDelete, onT
         )}
         
         {/* Availability Toggle */}
-        <div className="absolute top-3 right-3">
+        <div className="absolute top-3 right-3 z-20">
           <button
             onClick={() => onToggleAvailability(item)}
             className={`p-2 rounded-full shadow-lg backdrop-blur-sm transition-all duration-200 ${

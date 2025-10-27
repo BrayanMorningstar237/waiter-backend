@@ -1027,6 +1027,104 @@ app.get('/api/public/restaurants/by-category/:categoryName', async (req, res) =>
     res.status(500).json({ error: 'Failed to fetch restaurants', details: error.message });
   }
 });
+// ============================================================================
+// PUBLIC RESTAURANT ENDPOINTS (for customer-facing app)
+// ============================================================================
+
+// Get specific restaurant with public info
+app.get('/api/public/restaurants/:id', async (req, res) => {
+  try {
+    const restaurant = await Restaurant.findById(req.params.id)
+      .select('name description logo contact address isActive theme');
+    
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    if (!restaurant.isActive) {
+      return res.status(404).json({ error: 'Restaurant is not available' });
+    }
+
+    res.json({
+      message: 'Restaurant retrieved successfully',
+      restaurant
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurant:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant', details: error.message });
+  }
+});
+
+
+// Get restaurant menu items (public) - FIXED VERSION
+app.get('/api/public/restaurants/:id/menu', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    
+    console.log(`📋 Fetching public menu for restaurant: ${restaurantId}`);
+    
+    // Verify restaurant exists and is active
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant || !restaurant.isActive) {
+      return res.status(404).json({ error: 'Restaurant not found or not available' });
+    }
+
+    // Get available menu items AND include isAvailable field
+    const menuItems = await MenuItem.find({ 
+      restaurant: restaurantId,
+      isAvailable: true 
+    })
+    .populate('category', 'name _id')
+    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable') // ADD isAvailable here
+    .sort('category name');
+
+    console.log(`✅ Found ${menuItems.length} available menu items`);
+    
+    res.json({
+      message: 'Menu items retrieved successfully',
+      menuItems,
+      restaurant: {
+        name: restaurant.name,
+        id: restaurant._id
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurant menu:', error);
+    res.status(500).json({ error: 'Failed to fetch menu items', details: error.message });
+  }
+});
+
+// Get restaurant categories (public)
+app.get('/api/public/restaurants/:id/categories', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    
+    console.log(`📁 Fetching public categories for restaurant: ${restaurantId}`);
+    
+    // Verify restaurant exists and is active
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant || !restaurant.isActive) {
+      return res.status(404).json({ error: 'Restaurant not found or not available' });
+    }
+
+    const categories = await Category.find({ 
+      restaurant: restaurantId,
+      isActive: true 
+    })
+    .select('name description _id')
+    .sort('sortOrder name');
+
+    console.log(`✅ Found ${categories.length} categories for restaurant`);
+    
+    res.json({
+      message: 'Categories retrieved successfully',
+      categories
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurant categories:', error);
+    res.status(500).json({ error: 'Failed to fetch categories', details: error.message });
+  }
+});
 // List all available routes
 app.get('/api', (req, res) => {
   const routes = [

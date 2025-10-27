@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useToast } from '../contexts/ToastContext';
 import logo from "../assets/logo.png";
-
+import { useNavigate } from 'react-router-dom';
 interface Restaurant {
   _id: string;
   name: string;
@@ -368,7 +368,7 @@ interface RestaurantCardProps {
 const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, selectedCategory }) => {
   const [restaurantCategories, setRestaurantCategories] = useState<Category[]>([]);
   const [loadingCategories, setLoadingCategories] = useState(false);
-
+  const navigate = useNavigate();
   useEffect(() => {
     const loadRestaurantCategories = async () => {
       setLoadingCategories(true);
@@ -472,15 +472,18 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, selectedCat
       {/* Action Buttons - Always at the bottom */}
       <div className="mt-auto pt-3 lg:pt-4 border-t border-slate-100">
         <div className="grid grid-cols-2 gap-2 lg:gap-3">
-          <button className="border-2 border-slate-300 text-slate-700 py-2 lg:py-2.5 rounded-lg lg:rounded-xl hover:bg-slate-50 hover:border-slate-400 active:bg-slate-100 transition-all duration-200 text-xs lg:text-sm font-semibold flex items-center justify-center gap-1.5 lg:gap-2">
-            <i className="ri-eye-line text-sm lg:text-base"></i>
-            <span className="hidden sm:inline">View</span> Menu
-          </button>
-          <button className="bg-green-600 text-white py-2 lg:py-2.5 rounded-lg lg:rounded-xl hover:bg-green-700 active:bg-green-800 transition-all duration-200 text-xs lg:text-sm font-semibold flex items-center justify-center gap-1.5 lg:gap-2 shadow-md hover:shadow-lg">
-            <i className="ri-shopping-cart-line text-sm lg:text-base"></i>
-            Order
-          </button>
-        </div>
+  <button 
+    onClick={() => navigate(`/waiter/restaurant/${restaurant._id}/menu`)}
+    className="border-2 border-slate-300 text-slate-700 py-2 lg:py-2.5 rounded-lg lg:rounded-xl hover:bg-slate-50 hover:border-slate-400 active:bg-slate-100 transition-all duration-200 text-xs lg:text-sm font-semibold flex items-center justify-center gap-1.5 lg:gap-2"
+  >
+    <i className="ri-eye-line text-sm lg:text-base"></i>
+    <span className="hidden sm:inline">View</span> Menu
+  </button>
+  <button className="bg-green-600 text-white py-2 lg:py-2.5 rounded-lg lg:rounded-xl hover:bg-green-700 active:bg-green-800 transition-all duration-200 text-xs lg:text-sm font-semibold flex items-center justify-center gap-1.5 lg:gap-2 shadow-md hover:shadow-lg">
+    <i className="ri-shopping-cart-line text-sm lg:text-base"></i>
+    Order
+  </button>
+</div>
       </div>
     </div>
   </div>
