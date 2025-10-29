@@ -623,12 +623,14 @@ app.delete('/api/categories/:id', auth, async (req, res) => {
 // TABLES ROUTES
 // ============================================================================
 
+// Get tables with filtering
 app.get('/api/tables', async (req, res) => {
   try {
-    const { restaurantId } = req.query;
+    const { restaurantId, tableNumber } = req.query;
     let query = {};
     
     if (restaurantId) query.restaurant = restaurantId;
+    if (tableNumber) query.tableNumber = tableNumber;
 
     const tables = await Table.find(query)
       .populate('restaurant', 'name')
@@ -641,6 +643,46 @@ app.get('/api/tables', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch tables', details: error.message });
+  }
+});
+
+// Create table
+app.post('/api/tables', async (req, res) => {
+  try {
+    const { restaurant, tableNumber, capacity, status } = req.body;
+
+    // Check if table already exists
+    const existingTable = await Table.findOne({
+      restaurant,
+      tableNumber
+    });
+
+    if (existingTable) {
+      return res.json({
+        message: 'Table already exists',
+        table: existingTable
+      });
+    }
+
+    const table = new Table({
+      restaurant,
+      tableNumber,
+      capacity: capacity || 4,
+      status: status || 'available'
+    });
+
+    const savedTable = await table.save();
+    
+    const populatedTable = await Table.findById(savedTable._id)
+      .populate('restaurant', 'name');
+
+    res.status(201).json({
+      message: 'Table created successfully',
+      table: populatedTable
+    });
+  } catch (error) {
+    console.error('❌ Failed to create table:', error);
+    res.status(500).json({ error: 'Failed to create table', details: error.message });
   }
 });
 
@@ -703,6 +745,116 @@ app.get('/api/orders/:id', auth, async (req, res) => {
   }
 });
 
+// Create new order with table support
+app.post('/api/orders', async (req, res) => {
+  try {
+    const { restaurant, customerName, table, items, totalAmount, orderType } = req.body;
+
+    console.log('📦 Creating new order with data:', req.body);
+
+    // Validate required fields
+    if (!restaurant) {
+      return res.status(400).json({ error: 'Restaurant ID is required' });
+    }
+    if (!customerName || customerName.trim() === '') {
+      return res.status(400).json({ error: 'Customer name is required' });
+    }
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Order items are required' });
+    }
+    if (!totalAmount || totalAmount <= 0) {
+      return res.status(400).json({ error: 'Valid total amount is required' });
+    }
+
+    // Verify restaurant exists and is active
+    const restaurantExists = await Restaurant.findById(restaurant);
+    if (!restaurantExists) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    // Verify table exists if provided
+    if (table) {
+      const tableExists = await Table.findById(table);
+      if (!tableExists) {
+        return res.status(404).json({ error: 'Table not found' });
+      }
+    }
+
+    // Verify all menu items exist
+    for (const item of items) {
+      const menuItem = await MenuItem.findById(item.menuItem);
+      if (!menuItem) {
+        return res.status(404).json({ error: `Menu item not found: ${item.menuItem}` });
+      }
+    }
+
+    // MANUALLY GENERATE ORDER NUMBER
+    const generateOrderNumber = () => {
+      const date = new Date();
+      const timestamp = date.getTime();
+      const random = Math.floor(Math.random() * 1000);
+      return `ORD-${timestamp}-${random}`;
+    };
+
+    const orderNumber = generateOrderNumber();
+    console.log('🔢 Generated order number:', orderNumber);
+
+    // Create order with manually generated orderNumber
+    const order = new Order({
+      orderNumber: orderNumber,
+      restaurant,
+      customerName: customerName.trim(),
+      table: table || null, // Include table reference if available
+      items: items.map(item => ({
+        menuItem: item.menuItem,
+        quantity: item.quantity,
+        price: item.price,
+        specialInstructions: item.specialInstructions || ''
+      })),
+      totalAmount,
+      orderType: orderType || 'dine-in',
+      status: 'pending',
+      paymentStatus: 'pending'
+    });
+
+    // Save the order
+    const savedOrder = await order.save();
+    
+    console.log('✅ Order saved successfully with ID:', savedOrder._id);
+
+    // Populate the order with all details including table
+    const populatedOrder = await Order.findById(savedOrder._id)
+      .populate('items.menuItem', 'name description image price category ingredients')
+      .populate('restaurant', 'name contact address')
+      .populate('table', 'tableNumber capacity status');
+
+    console.log(`✅ New order created: ${populatedOrder.orderNumber} for ${customerName}`);
+    if (table) {
+      console.log(`🪑 Table: ${populatedOrder.table?.tableNumber}`);
+    }
+    console.log(`📊 Order details: ${populatedOrder.items.length} items, Total: ${totalAmount} CFA`);
+    
+    res.status(201).json({
+      message: 'Order created successfully',
+      order: populatedOrder
+    });
+  } catch (error) {
+    console.error('❌ Failed to create order:', error);
+    
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.join(', ') 
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Failed to create order', 
+      details: error.message 
+    });
+  }
+});
 // Update order status
 app.put('/api/orders/:id/status', auth, async (req, res) => {
   try {
@@ -1027,6 +1179,7 @@ app.get('/api/public/restaurants/by-category/:categoryName', async (req, res) =>
     res.status(500).json({ error: 'Failed to fetch restaurants', details: error.message });
   }
 });
+
 // ============================================================================
 // PUBLIC RESTAURANT ENDPOINTS (for customer-facing app)
 // ============================================================================

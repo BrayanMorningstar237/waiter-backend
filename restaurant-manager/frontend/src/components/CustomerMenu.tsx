@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 
 interface MenuItem {
@@ -49,6 +49,7 @@ interface Category {
 const CustomerMenu: React.FC = () => {
   const { restaurantId } = useParams<{ restaurantId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { showError } = useToast();
   
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
@@ -62,12 +63,23 @@ const CustomerMenu: React.FC = () => {
   const [cartAnimation, setCartAnimation] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   
+  // Customer info modal state - only name now
+  const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  
   // Custom toast state for CustomerMenu
   const [customerToast, setCustomerToast] = useState<{
     message: string;
     type: 'success' | 'error' | 'warning' | 'info';
   } | null>(null);
 
+  // Get table number from URL query parameter
+  const getTableNumberFromUrl = () => {
+    const searchParams = new URLSearchParams(location.search);
+    return searchParams.get('table') || '';
+  };
+
+  const tableNumber = getTableNumberFromUrl();
   const primaryColor = restaurant?.theme?.primaryColor || '#FF6B6B';
 
   // Show custom toast function
@@ -123,8 +135,6 @@ const CustomerMenu: React.FC = () => {
   });
 
   const addToCart = (itemId: string) => {
-    // const previousCount = Object.values(cart).reduce((sum, count) => sum + count, 0);
-    
     setCart(prev => ({
       ...prev,
       [itemId]: (prev[itemId] || 0) + 1
@@ -172,6 +182,111 @@ const CustomerMenu: React.FC = () => {
     }
   };
 
+  // Handle checkout - show customer info modal
+  const handleCheckout = () => {
+    setShowCustomerModal(true);
+  };
+
+  // Handle customer info submission
+  const handleCustomerInfoSubmit = async () => {
+    if (!customerName.trim()) {
+      showCustomerToast('Please enter your name', 'error');
+      return;
+    }
+
+    try {
+      // First, find or create the table
+      let tableId = null;
+      if (tableNumber) {
+        // Try to find existing table
+        const tablesResponse = await fetch(`http://localhost:5000/api/tables?restaurant=${restaurantId}&tableNumber=${tableNumber}`);
+        if (tablesResponse.ok) {
+          const tablesData = await tablesResponse.json();
+          if (tablesData.tables && tablesData.tables.length > 0) {
+            tableId = tablesData.tables[0]._id;
+          } else {
+            // Create new table if doesn't exist
+            const createTableResponse = await fetch('http://localhost:5000/api/tables', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                restaurant: restaurantId,
+                tableNumber: parseInt(tableNumber),
+                capacity: 4, // Default capacity
+                status: 'occupied'
+              })
+            });
+            
+            if (createTableResponse.ok) {
+              const tableData = await createTableResponse.json();
+              tableId = tableData.table._id;
+            }
+          }
+        }
+      }
+
+      // Create order with customer info and table
+      const orderData = {
+        restaurant: restaurantId,
+        customerName: customerName.trim(),
+        table: tableId, // Include table reference if available
+        items: Object.entries(cart).map(([itemId, quantity]) => {
+          const item = menuItems.find(mi => mi._id === itemId);
+          return {
+            menuItem: itemId,
+            quantity: quantity,
+            price: item?.price || 0,
+            specialInstructions: ""
+          };
+        }),
+        totalAmount: Object.entries(cart).reduce((sum, [itemId, quantity]) => {
+          const item = menuItems.find(mi => mi._id === itemId);
+          return sum + ((item?.price || 0) * quantity);
+        }, 0),
+        orderType: 'dine-in'
+      };
+
+      console.log('📦 Sending order data:', orderData);
+
+      const response = await fetch('http://localhost:5000/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderData)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || errorData.error || 'Failed to create order');
+      }
+
+      const result = await response.json();
+      
+      // Show success message with order number
+      const tableInfo = tableNumber ? ` for Table ${tableNumber}` : '';
+      showCustomerToast(`Order placed successfully!${tableInfo}`, 'success');
+      
+      // Clear cart and close modals
+      setCart({});
+      setShowCustomerModal(false);
+      setShowCart(false);
+      setCustomerName('');
+      
+    } catch (error: any) {
+      console.error('❌ Order creation error:', error);
+      showCustomerToast(`Failed to place order: ${error.message}`, 'error');
+    }
+  };
+
+  // Close customer modal
+  const handleCloseCustomerModal = () => {
+    setShowCustomerModal(false);
+    setCustomerName('');
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -209,14 +324,23 @@ const CustomerMenu: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <button
-                onClick={() => navigate('/waiter/restaurants')}
-                className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all flex-shrink-0"
-              >
-                <i className="ri-arrow-left-line text-lg sm:text-xl text-gray-700"></i>
-              </button>
+  onClick={() => {
+    // Get current query parameters
+    const searchParams = new URLSearchParams(location.search);
+    // Navigate back to restaurants with all current query parameters
+    navigate(`/waiter/restaurants?${searchParams.toString()}`);
+  }}
+  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all flex-shrink-0"
+>
+  <i className="ri-arrow-left-line text-lg sm:text-xl text-gray-700"></i>
+</button>
               <div className="min-w-0 flex-1">
                 <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{restaurant.name}</h1>
-                <p className="text-gray-500 text-xs sm:text-sm truncate">{restaurant.description}</p>
+                {tableNumber && (
+                  <p className="text-gray-600 text-xs font-medium mt-1">
+                    Table: {tableNumber}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -249,17 +373,92 @@ const CustomerMenu: React.FC = () => {
           </div>
         </div>
       </div>
+<div className="bg-white border-b border-gray-100">
+  <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5">
+    <div className="flex items-start gap-3 sm:gap-6">
+      
+      {/* Restaurant Logo */}
+      <div className="flex-shrink-0">
+        <div className="w-14 h-14 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl shadow-sm border border-orange-100 overflow-hidden flex items-center justify-center hover:shadow-md transition-shadow">
+          {restaurant.logo ? (
+            <img
+              src={`http://localhost:5000${restaurant.logo}`}
+              alt={restaurant.name}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <i className="ri-restaurant-2-line text-orange-400 text-xl sm:text-3xl"></i>
+          )}
+        </div>
+      </div>
 
+      {/* Restaurant Info - Horizontal Layout */}
+      <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-6">
+        
+        {/* Left Section: Name & Details */}
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg sm:text-2xl font-bold text-gray-900 mb-1 sm:mb-1.5 truncate">
+            {restaurant.name}
+          </h1>
+          
+          {/* Horizontal Info Row */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-gray-600">
+            {restaurant.address?.city && (
+              <div className="flex items-center gap-1.5">
+                <i className="ri-map-pin-2-line text-red-500"></i>
+                <span className="truncate max-w-[200px]">
+                  {restaurant.address.city}{restaurant.address.country && `, ${restaurant.address.country}`}
+                </span>
+              </div>
+            )}
+            
+            {restaurant.contact?.phone && (
+              <div className="flex items-center gap-1.5">
+                <i className="ri-phone-line text-green-500"></i>
+                <span>{restaurant.contact.phone}</span>
+              </div>
+            )}
+            
+            {/* Mobile: Table and Rating on same line */}
+            <div className="flex items-center gap-2 sm:contents">
+              {tableNumber && (
+                <div className="flex items-center gap-1.5 bg-blue-50 px-2.5 py-1 rounded-full">
+                  <i className="ri-table-line text-blue-500 text-xs"></i>
+                  <span className="text-blue-700 font-medium text-xs">Table {tableNumber}</span>
+                </div>
+              )}
+              
+              {/* Rating - Inline on mobile, separate on desktop */}
+              <div className="flex sm:hidden items-center gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-3 py-1 shadow-sm">
+                <i className="ri-star-fill text-amber-500 text-sm"></i>
+                <span className="text-amber-900 font-bold text-sm">4.8</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Section: Rating - Desktop Only */}
+        <div className="hidden sm:flex items-center gap-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-4 py-2 shadow-sm hover:shadow transition-shadow flex-shrink-0">
+          <i className="ri-star-fill text-amber-500 text-lg"></i>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-amber-900 font-bold text-lg">4.8</span>
+            <span className="text-amber-600 text-xs font-medium">Excellent</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
       {/* Search & Filter */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-        <div className="bg-white rounded-3xl p-4 sm:p-6 shadow-sm border border-gray-100 mb-6">
+      <div className="max-w-7xl mx-auto lg:px-6 lg:py-4  pb-6">
+        <div className="bg-white rounded-b-3xl rounded-t-none lg:rounded-3xl p-4 sm:p-6 shadow-sm border border-gray-100 mb-6">
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
               <div className="relative">
                 <i className="ri-search-line absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 text-lg sm:text-xl"></i>
                 <input
                   type="text"
-                  placeholder="Search your food..."
+                  placeholder="Search Menu..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-12 sm:pl-14 pr-4 sm:pr-5 py-3 sm:py-4 bg-gray-50 border-0 rounded-2xl text-sm sm:text-base transition-all placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white"
@@ -268,59 +467,121 @@ const CustomerMenu: React.FC = () => {
             </div>
           </div>
 
-          {/* Horizontally Scrollable Category Tags */}
-          <div className="mt-4 sm:mt-5">
-            <div className="flex overflow-x-auto pb-2 -mx-2 px-2 scrollbar-hide">
-              <div className="flex gap-2 flex-nowrap">
-                <button
-                  onClick={() => setSelectedCategory('all')}
-                  className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-medium transition-all text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
-                    selectedCategory === 'all'
-                      ? 'text-white shadow-md'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                  style={selectedCategory === 'all' ? { backgroundColor: primaryColor } : {}}
-                >
-                  All
-                </button>
-                {categories.map(category => (
-                  <button
-                    key={category._id}
-                    onClick={() => setSelectedCategory(category._id)}
-                    className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-medium transition-all text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
-                      selectedCategory === category._id
-                        ? 'text-white shadow-md'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                    style={selectedCategory === category._id ? { backgroundColor: primaryColor } : {}}
-                  >
-                    {category.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+     {/* Horizontally Scrollable Category Tags */}
+<div className="mt-4 sm:mt-5">
+  <div
+    className="overflow-x-auto scrollbar-hide -mx-3 px-3"
+    style={{ WebkitOverflowScrolling: "touch" }}
+  >
+    <div
+      className="
+        flex gap-2 flex-nowrap
+        w-max sm:w-full
+        justify-start lg:justify-center
+      "
+    >
+      {/* All Button */}
+      <button
+        onClick={() => setSelectedCategory("all")}
+        className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-medium transition-all text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
+          selectedCategory === "all"
+            ? "text-white shadow-md"
+            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+        }`}
+        style={selectedCategory === "all" ? { backgroundColor: primaryColor } : {}}
+      >
+        All
+      </button>
+
+      {/* Dynamic Categories */}
+      {categories.map((category) => (
+        <button
+          key={category._id}
+          onClick={() => setSelectedCategory(category._id)}
+          className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-medium transition-all text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
+            selectedCategory === category._id
+              ? "text-white shadow-md"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+          style={
+            selectedCategory === category._id
+              ? { backgroundColor: primaryColor }
+              : {}
+          }
+        >
+          {category.name}
+        </button>
+      ))}
+    </div>
+  </div>
+</div>
+
+
 
           {(searchTerm || selectedCategory !== 'all') && (
-            <div className="mt-4 sm:mt-5 p-3 sm:p-4 bg-gray-50 rounded-2xl">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <span className="text-gray-600 text-sm">
-                  Found <span className="font-bold text-gray-900">{filteredItems.length}</span> items
-                  {searchTerm && <span className="text-gray-400"> for "{searchTerm}"</span>}
-                </span>
-                <button
-                  onClick={() => {
-                    setSearchTerm('');
-                    setSelectedCategory('all');
-                  }}
-                  className="text-sm font-medium hover:underline text-left sm:text-right"
-                  style={{ color: primaryColor }}
-                >
-                  Clear all
-                </button>
-              </div>
-            </div>
+  <div className="mt-4 sm:mt-5 p-3 sm:p-4 bg-gray-50 rounded-2xl">
+    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-gray-600">
+          <i className="ri-search-eye-line text-base"></i>
+          <span>
+            Found <span className="font-bold text-gray-900">{filteredItems.length}</span> items
+          </span>
+        </div>
+        
+        <div className="flex flex-wrap items-center gap-2">
+          {searchTerm && (
+            <span className="inline-flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-gray-200 text-sm">
+              <i className="ri-search-line text-gray-400"></i>
+              <span className="text-gray-700">"{searchTerm}"</span>
+              <button
+                onClick={() => setSearchTerm('')}
+                className="w-5 h-5 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
+              >
+                <i className="ri-close-line text-xs text-gray-500"></i>
+              </button>
+            </span>
           )}
+          
+          {selectedCategory !== 'all' && (
+            <span 
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-medium"
+              style={{ 
+                borderColor: primaryColor + '40',
+                backgroundColor: primaryColor + '10',
+                color: primaryColor
+              }}
+            >
+              <i className="ri-price-tag-3-line"></i>
+              {categories.find(cat => cat._id === selectedCategory)?.name || 'Selected Category'}
+              <button
+                onClick={() => setSelectedCategory('all')}
+                className="w-5 h-5 rounded-full flex items-center justify-center transition-colors"
+                style={{ backgroundColor: primaryColor + '20' }}
+              >
+                <i className="ri-close-line text-xs" style={{ color: primaryColor }}></i>
+              </button>
+            </span>
+          )}
+        </div>
+      </div>
+      
+      {(searchTerm || selectedCategory !== 'all') && (
+        <button
+          onClick={() => {
+            setSearchTerm('');
+            setSelectedCategory('all');
+          }}
+          className="text-sm font-medium hover:underline flex justify-center items-center gap-2 text-left sm:text-right px-3 py-1.5 bg-white border border-gray-200 rounded-full hover:bg-gray-50 transition-colors"
+          style={{ color: primaryColor }}
+        >
+          <i className="ri-close-line hidden lg:inline"></i>
+          Clear all
+        </button>
+      )}
+    </div>
+  </div>
+)}
         </div>
 
         {/* Menu Items Grid */}
@@ -390,11 +651,32 @@ const CustomerMenu: React.FC = () => {
               menuItems={menuItems}
               onUpdateCart={setCart}
               onClose={handleCloseCart}
+              onCheckout={handleCheckout}
               restaurant={restaurant}
               primaryColor={primaryColor}
             />
           </div>
         </div>
+      )}
+
+      {/* Customer Info Modal */}
+      {showCustomerModal && (
+        <CustomerInfoModal
+          customerName={customerName}
+          onCustomerNameChange={setCustomerName}
+          onSubmit={handleCustomerInfoSubmit}
+          onClose={handleCloseCustomerModal}
+          primaryColor={primaryColor}
+          cartItems={Object.entries(cart).map(([itemId, quantity]) => {
+            const item = menuItems.find(mi => mi._id === itemId);
+            return item ? { ...item, quantity } : null;
+          }).filter(Boolean) as (MenuItem & { quantity: number })[]}
+          total={Object.entries(cart).reduce((sum, [itemId, quantity]) => {
+            const item = menuItems.find(mi => mi._id === itemId);
+            return sum + ((item?.price || 0) * quantity);
+          }, 0)}
+          tableNumber={tableNumber}
+        />
       )}
     </div>
   );
@@ -517,6 +799,7 @@ interface CartModalContentProps {
   menuItems: MenuItem[];
   onUpdateCart: (cart: {[key: string]: number}) => void;
   onClose: () => void;
+  onCheckout: () => void;
   restaurant: Restaurant;
   primaryColor: string;
 }
@@ -526,6 +809,7 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
   menuItems, 
   onUpdateCart, 
   onClose, 
+  onCheckout,
   restaurant,
   primaryColor,
 }) => {
@@ -550,10 +834,6 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
 
   const clearCart = () => {
     onUpdateCart({});
-  };
-
-  const handleCheckout = () => {
-    alert('Checkout functionality would be implemented here!');
   };
 
   return (
@@ -650,7 +930,7 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
               Clear Cart
             </button>
             <button
-              onClick={handleCheckout}
+              onClick={onCheckout}
               className="flex-1 text-white py-3 sm:py-4 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg text-sm sm:text-base"
               style={{ backgroundColor: primaryColor }}
             >
@@ -660,6 +940,118 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
         </div>
       )}
     </>
+  );
+};
+
+// Customer Info Modal Component
+interface CustomerInfoModalProps {
+  customerName: string;
+  onCustomerNameChange: (name: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+  primaryColor: string;
+  cartItems: (MenuItem & { quantity: number })[];
+  total: number;
+  tableNumber: string;
+}
+
+const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
+  customerName,
+  onCustomerNameChange,
+  onSubmit,
+  onClose,
+  primaryColor,
+  cartItems,
+  total,
+  tableNumber
+}) => {
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out"
+      onClick={handleBackdropClick}
+    >
+      <div className="bg-white w-full max-w-md max-h-[90vh] overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
+        <div className="p-6 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-gray-900">Complete Your Order</h2>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <i className="ri-close-line text-lg text-gray-700"></i>
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {/* Order Summary */}
+          <div className="mb-6">
+            <h3 className="font-semibold text-gray-900 mb-3">Order Summary</h3>
+            {tableNumber && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+                <p className="text-blue-800 text-sm font-medium">
+                  Table: {tableNumber}
+                </p>
+              </div>
+            )}
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {cartItems.map(item => (
+                <div key={item._id} className="flex justify-between items-center text-sm">
+                  <span className="text-gray-600">
+                    {item.quantity}x {item.name}
+                  </span>
+                  <span className="font-medium text-gray-900">
+                    {(item.price * item.quantity).toLocaleString()} CFA
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="border-t border-gray-200 mt-3 pt-3">
+              <div className="flex justify-between items-center font-semibold">
+                <span>Total:</span>
+                <span>{total.toLocaleString()} CFA</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Customer Information Form - Only Name */}
+          <div className="space-y-4">
+            <h3 className="font-semibold text-gray-900">Your Information</h3>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Your Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={customerName}
+                onChange={(e) => onCustomerNameChange(e.target.value)}
+                placeholder="Enter your name"
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm transition-all placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white focus:border-red-300"
+                autoFocus
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-gray-100 bg-gray-50 p-6 flex-shrink-0">
+          <button
+            onClick={onSubmit}
+            disabled={!customerName.trim()}
+            className="w-full text-white py-4 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ backgroundColor: primaryColor }}
+          >
+            Confirm Order
+          </button>
+        </div>
+      </div>
+    </div>
   );
 };
 
