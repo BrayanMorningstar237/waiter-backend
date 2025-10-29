@@ -1,4 +1,3 @@
-// src/components/CustomerMenuToast.tsx
 import React, { useEffect, useState } from 'react';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
@@ -18,12 +17,15 @@ const CustomerMenuToast: React.FC<CustomerMenuToastProps> = ({
   onClose,
   primaryColor 
 }) => {
-  const [isLeaving, setIsLeaving] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
+    // Slide in
+    setIsVisible(true);
+    // Slide out after duration
     const timer = setTimeout(() => {
-      setIsLeaving(true);
-      setTimeout(onClose, 300);
+      setIsVisible(false);
+      setTimeout(onClose, 400); // wait for animation to end
     }, duration);
 
     return () => clearTimeout(timer);
@@ -39,45 +41,27 @@ const CustomerMenuToast: React.FC<CustomerMenuToastProps> = ({
   const config = typeConfig[type];
 
   return (
-    <div className={`
-      fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[100] 
-      min-w-80 max-w-md transition-all duration-300
-      ${isLeaving ? 'scale-95 opacity-0' : 'scale-100 opacity-100'}
-    `}>
+    <div
+      className={`
+        fixed top-4 left-1/2 transform -translate-x-1/2 z-[100]
+        transition-all duration-500 ease-in-out
+        ${isVisible ? 'translate-y-0 opacity-100' : '-translate-y-10 opacity-0'}
+      `}
+    >
       <div 
-        className="rounded-2xl shadow-2xl border-2 backdrop-blur-sm bg-white/95 p-6 text-center"
-        style={{ 
+        className="w-full flex items-center gap-3 px-4 py-2 rounded-xl shadow-lg backdrop-blur-sm bg-white/95 border"
+        style={{
           borderColor: primaryColor + '40',
-          boxShadow: `0 20px 25px -5px ${primaryColor}20, 0 10px 10px -5px ${primaryColor}10`
+          boxShadow: `0 10px 20px -5px ${primaryColor}25`,
         }}
       >
-        <div className="flex flex-col items-center space-y-3">
-          <div 
-            className="w-12 h-12 rounded-full flex items-center justify-center"
-            style={{ backgroundColor: primaryColor + '20' }}
-          >
-            <i 
-              className={`${config.icon} text-xl`}
-              style={{ color: primaryColor }}
-            ></i>
-          </div>
-          <p 
-            className="font-semibold text-lg"
-            style={{ color: primaryColor }}
-          >
-            {message}
-          </p>
-        </div>
-        <div className="w-full bg-gray-200 rounded-full h-1.5 mt-4">
-          <div
-            className="h-1.5 rounded-full transition-all"
-            style={{ 
-              width: isLeaving ? '0%' : '100%',
-              backgroundColor: primaryColor,
-              transition: `width ${duration}ms linear`
-            }}
-          />
-        </div>
+        <i 
+          className={`${config.icon} text-lg`}
+          style={{ color: primaryColor }}
+        ></i>
+        <p className="font-medium text-sm" style={{ color: primaryColor }}>
+          {message}
+        </p>
       </div>
     </div>
   );

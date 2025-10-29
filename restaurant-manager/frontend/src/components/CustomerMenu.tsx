@@ -49,7 +49,7 @@ interface Category {
 const CustomerMenu: React.FC = () => {
   const { restaurantId } = useParams<{ restaurantId: string }>();
   const navigate = useNavigate();
-  const { showError, showSuccess } = useToast();
+  const { showError } = useToast();
   
   const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -59,10 +59,26 @@ const CustomerMenu: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [cart, setCart] = useState<{[key: string]: number}>({});
   const [showCart, setShowCart] = useState(false);
-  const [cartRipple, setCartRipple] = useState(false);
+  const [cartAnimation, setCartAnimation] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  
+  // Custom toast state for CustomerMenu
+  const [customerToast, setCustomerToast] = useState<{
+    message: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+  } | null>(null);
 
   const primaryColor = restaurant?.theme?.primaryColor || '#FF6B6B';
+
+  // Show custom toast function
+  const showCustomerToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'success') => {
+    setCustomerToast({ message, type });
+  };
+
+  // Close custom toast function
+  const closeCustomerToast = () => {
+    setCustomerToast(null);
+  };
 
   useEffect(() => {
     if (restaurantId) {
@@ -107,20 +123,19 @@ const CustomerMenu: React.FC = () => {
   });
 
   const addToCart = (itemId: string) => {
-    const previousCount = Object.values(cart).reduce((sum, count) => sum + count, 0);
+    // const previousCount = Object.values(cart).reduce((sum, count) => sum + count, 0);
     
     setCart(prev => ({
       ...prev,
       [itemId]: (prev[itemId] || 0) + 1
     }));
     
-    showSuccess('Item added to cart!');
+    // Use custom toast for success messages
+    showCustomerToast('Item added to cart!', 'success');
     
-    // Trigger ripple effect if this is the first item being added
-    if (previousCount === 0) {
-      setCartRipple(true);
-      setTimeout(() => setCartRipple(false), 600);
-    }
+    // Trigger cart animation every time an item is added
+    setCartAnimation(true);
+    setTimeout(() => setCartAnimation(false), 600);
   };
 
   const removeFromCart = (itemId: string) => {
@@ -205,23 +220,30 @@ const CustomerMenu: React.FC = () => {
               </div>
             </div>
 
+            {/* Enhanced Cart Button with Animation on Every Add */}
             <button
               onClick={() => setShowCart(true)}
               className={`relative w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all flex-shrink-0 ml-2 sm:ml-3 shadow-lg ${
-                cartRipple ? 'animate-pulse' : ''
+                cartAnimation ? 'scale-110' : 'scale-100'
               }`}
               style={{ backgroundColor: primaryColor }}
             >
               <i className="ri-shopping-cart-2-line text-xl sm:text-2xl text-white"></i>
               {getCartItemCount() > 0 && (
-                <span className="absolute -top-1 -right-1 bg-yellow-400 text-gray-900 text-xs font-bold rounded-full w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center shadow-md">
+                <span className={`absolute -top-1 -right-1 bg-yellow-400 text-gray-900 text-xs font-bold rounded-full w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center shadow-md transition-all ${
+                  cartAnimation ? 'scale-125' : 'scale-100'
+                }`}>
                   {getCartItemCount()}
                 </span>
               )}
               
-              {/* Ripple Effect */}
-              {cartRipple && (
-                <div className="absolute inset-0 rounded-full border-2 border-yellow-400 animate-ping"></div>
+              {/* Ripple Effect on Every Add */}
+              {cartAnimation && (
+                <>
+                  <div className="absolute inset-0 rounded-full border-2 border-yellow-400 animate-ping"></div>
+                  <div className="absolute inset-0 rounded-full border-2 border-yellow-300 animate-ping" style={{ animationDelay: '100ms' }}></div>
+                  <div className="absolute inset-0 rounded-full border-2 border-yellow-200 animate-ping" style={{ animationDelay: '200ms' }}></div>
+                </>
               )}
             </button>
           </div>
@@ -336,20 +358,32 @@ const CustomerMenu: React.FC = () => {
         )}
       </div>
 
-      {/* Cart Modal with Smooth Slide Animation */}
+      {/* Custom Toast */}
+      {customerToast && (
+        <CustomerMenuToast
+          message={customerToast.message}
+          type={customerToast.type}
+          onClose={closeCustomerToast}
+          primaryColor={primaryColor}
+        />
+      )}
+
+      {/* Enhanced Cart Modal with Smooth Slide Animation */}
       {showCart && (
         <div 
-          className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center transition-opacity duration-300 ${
-            isClosing ? 'opacity-0' : 'opacity-100'
-          }`}
+          className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center ${
+            isClosing 
+              ? 'bg-black/0 backdrop-blur-0' 
+              : 'bg-black/50 backdrop-blur-sm'
+          } transition-all duration-300 ease-out`}
           onClick={handleBackdropClick}
         >
           <div 
-            className={`bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-2xl max-h-[85vh] sm:max-h-[90vh] overflow-hidden shadow-2xl flex flex-col transform transition-transform duration-300 ${
+            className={`bg-white w-full max-w-2xl max-h-[85vh] sm:max-h-[90vh] overflow-hidden shadow-2xl flex flex-col ${
               isClosing 
-                ? 'translate-y-full sm:translate-y-0 sm:scale-95' 
-                : 'translate-y-0 sm:scale-100'
-            }`}
+                ? 'translate-y-full sm:translate-y-4 sm:scale-95 sm:opacity-0 rounded-t-3xl' 
+                : 'translate-y-0 sm:scale-100 sm:opacity-100 rounded-t-3xl sm:rounded-3xl'
+            } transition-all duration-300 ease-out`}
           >
             <CartModalContent
               cart={cart}
@@ -544,7 +578,7 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
           <div className="text-center py-8 sm:py-12">
             <i className="ri-shopping-cart-line text-4xl sm:text-6xl text-gray-300 mb-4"></i>
             <p className="text-gray-600 font-medium text-base sm:text-lg">Your cart is empty</p>
-            <p className="text-gray-500 text-sm mt-2">Add some delicious items!</p>
+            <p className="text-gray-500 text-sm mt-2">Add Some Items!</p>
           </div>
         ) : (
           <div className="space-y-3 sm:space-y-4">
@@ -626,6 +660,72 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
         </div>
       )}
     </>
+  );
+};
+
+// Updated CustomerMenuToast Component with Slide Animation
+interface CustomerMenuToastProps {
+  message: string;
+  type: 'success' | 'error' | 'warning' | 'info';
+  duration?: number;
+  onClose: () => void;
+  primaryColor: string;
+}
+
+const CustomerMenuToast: React.FC<CustomerMenuToastProps> = ({ 
+  message, 
+  type, 
+  duration = 3000, 
+  onClose,
+  primaryColor 
+}) => {
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    // Slide in
+    setIsVisible(true);
+    // Slide out after duration
+    const timer = setTimeout(() => {
+      setIsVisible(false);
+      setTimeout(onClose, 400); // wait for animation to end
+    }, duration);
+
+    return () => clearTimeout(timer);
+  }, [duration, onClose]);
+
+  const typeConfig = {
+    success: { icon: 'ri-checkbox-circle-line' },
+    error: { icon: 'ri-error-warning-line' },
+    warning: { icon: 'ri-alert-line' },
+    info: { icon: 'ri-information-line' }
+  };
+
+  const config = typeConfig[type];
+
+  return (
+    <div
+      className={`
+        fixed top-4 left-1/2 transform -translate-x-1/2 z-[100]
+        transition-all duration-500 ease-in-out
+        ${isVisible ? 'translate-y-0 opacity-100' : '-translate-y-10 opacity-0'}
+      `}
+    >
+      <div 
+        className="flex items-center gap-3 px-4 py-2 rounded-xl shadow-lg backdrop-blur-sm bg-white/95 border"
+        style={{
+          borderColor: primaryColor + '40',
+          boxShadow: `0 10px 20px -5px ${primaryColor}25`,
+        }}
+      >
+        <i 
+          className={`${config.icon} text-lg`}
+          style={{ color: primaryColor }}
+        ></i>
+        <p className="font-medium text-sm" style={{ color: primaryColor }}>
+          {message}
+        </p>
+      </div>
+    </div>
   );
 };
 
