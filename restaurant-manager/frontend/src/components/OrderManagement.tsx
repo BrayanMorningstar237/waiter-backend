@@ -3,8 +3,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import type { Order, OrderStatus } from '../types';
 
-const OrderManagement: React.FC = () => {
-  const { user, restaurant } = useAuth();
+// Add props interface for OrderManagement
+interface OrderManagementProps {
+  selectedOrderId?: string | null;
+  autoScroll?: boolean;
+}
+
+const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, autoScroll = false }) => {
+  const { user } = useAuth(); // Removed unused 'restaurant'
   const { showSuccess, showError } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,10 +29,6 @@ const OrderManagement: React.FC = () => {
   const [recentlyPaidId, setRecentlyPaidId] = useState<string | null>(null);
   const [showRipple, setShowRipple] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-
-  useEffect(() => {
-    loadOrders();
-  }, []);
 
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
@@ -49,6 +51,32 @@ const OrderManagement: React.FC = () => {
     orders.filter(o => o.paymentStatus === 'paid').length, 
     [orders]
   );
+
+  useEffect(() => {
+    loadOrders();
+  }, []);
+
+  // Add effect to handle auto-scrolling to selected order
+  useEffect(() => {
+    if (selectedOrderId && autoScroll && filteredOrders.length > 0) {
+      // Small delay to ensure DOM is rendered
+      setTimeout(() => {
+        const orderElement = document.getElementById(`order-${selectedOrderId}`);
+        if (orderElement) {
+          orderElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+          });
+          
+          // Add highlight effect
+          orderElement.classList.add('animate-pulse-green');
+          setTimeout(() => {
+            orderElement.classList.remove('animate-pulse-green');
+          }, 3000);
+        }
+      }, 500);
+    }
+  }, [selectedOrderId, autoScroll, filteredOrders]);
 
   const loadOrders = async () => {
     if (!user) {
@@ -311,7 +339,7 @@ const OrderManagement: React.FC = () => {
                 Orders
               </h1>
               <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{orders.length} total orders</p>
-              <div className="text-lg sm:text-xl font-bold bg-gradient-to-r from-green-700 to-green-600 bg-clip-text text-transparent mt-1">Total Revenue: {totalRevenue.toLocaleString()} CFA</div>
+              <div className="text-lg sm:text-xl font-bold bg-gradient-to-r from-green-700 to-green-600 bg-clip-text text-transparent mt-1"><span className='hidden lg:inline'>Total</span> Revenue: {totalRevenue.toLocaleString()} CFA</div>
             </div>
             <div className="flex items-center space-x-2 sm:space-x-3">
               <button
@@ -453,6 +481,7 @@ const OrderManagement: React.FC = () => {
                   onMarkAsPaid={markAsPaid}
                   onMarkAsUnpaid={markAsUnpaid}
                   isRecentlyPaid={order._id === recentlyPaidId}
+                  isSelected={order._id === selectedOrderId && autoScroll}
                 />
               </div>
             ))
@@ -507,6 +536,19 @@ const OrderManagement: React.FC = () => {
         .animate-pulse-green {
           animation: pulse-green 2s ease-in-out;
         }
+
+        @keyframes highlight-blue {
+          0%, 100% {
+            background-color: rgb(239 246 255);
+          }
+          50% {
+            background-color: rgb(219 234 254);
+          }
+        }
+        
+        .animate-highlight-blue {
+          animation: highlight-blue 2s ease-in-out;
+        }
       `}</style>
     </div>
   );
@@ -519,6 +561,7 @@ interface OrderCardProps {
   onMarkAsPaid: (orderId: string) => void;
   onMarkAsUnpaid: (orderId: string) => void;
   isRecentlyPaid?: boolean;
+  isSelected?: boolean;
 }
 
 const OrderCard: React.FC<OrderCardProps> = ({ 
@@ -526,7 +569,8 @@ const OrderCard: React.FC<OrderCardProps> = ({
   onUpdateStatus, 
   onMarkAsPaid, 
   onMarkAsUnpaid,
-  isRecentlyPaid = false 
+  isRecentlyPaid = false,
+  isSelected = false
 }) => {
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus>(order.status);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -575,11 +619,16 @@ const OrderCard: React.FC<OrderCardProps> = ({
   };
 
   return (
-    <div className={`bg-white rounded-2xl shadow-md border-2 transition-all overflow-hidden ${
-      isRecentlyPaid 
-        ? 'border-green-400 bg-gradient-to-br from-green-50 to-emerald-50 animate-pulse-green' 
-        : 'border-gray-100 hover:shadow-lg'
-    }`}>
+    <div 
+      id={`order-${order._id}`}
+      className={`bg-white rounded-2xl shadow-md border-2 transition-all overflow-hidden ${
+        isRecentlyPaid 
+          ? 'border-green-400 bg-gradient-to-br from-green-50 to-emerald-50 animate-pulse-green' 
+          : isSelected
+          ? 'border-blue-400 bg-gradient-to-br from-blue-50 to-blue-100 animate-highlight-blue'
+          : 'border-gray-100 hover:shadow-lg'
+      }`}
+    >
       
       {/* Recently Paid Badge */}
       {isRecentlyPaid && (
@@ -587,6 +636,15 @@ const OrderCard: React.FC<OrderCardProps> = ({
           <i className="ri-checkbox-circle-fill animate-bounce"></i>
           <span className="text-sm font-bold">Just Paid!</span>
           <i className="ri-checkbox-circle-fill animate-bounce"></i>
+        </div>
+      )}
+
+      {/* Selected Order Badge */}
+      {isSelected && (
+        <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 flex items-center justify-center space-x-2">
+          <i className="ri-arrow-right-line animate-pulse"></i>
+          <span className="text-sm font-bold">Selected Order</span>
+          <i className="ri-arrow-left-line animate-pulse"></i>
         </div>
       )}
 
