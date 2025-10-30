@@ -311,7 +311,7 @@ const OrderManagement: React.FC = () => {
                 Orders
               </h1>
               <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{orders.length} total orders</p>
-              <div className="text-lg sm:text-xl font-bold bg-gradient-to-r from-green-700 to-green-600 bg-clip-text text-transparent mt-1"><span className='hidden lg:inline'>Total</span> Revenue: {totalRevenue.toLocaleString()} CFA</div>
+              <div className="text-lg sm:text-xl font-bold bg-gradient-to-r from-green-700 to-green-600 bg-clip-text text-transparent mt-1">Total Revenue: {totalRevenue.toLocaleString()} CFA</div>
             </div>
             <div className="flex items-center space-x-2 sm:space-x-3">
               <button

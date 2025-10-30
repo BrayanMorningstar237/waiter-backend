@@ -6,6 +6,7 @@ import OrderManagement from './OrderManagement';
 import QRCodeGenerator from './QRCodeGenerator';
 import Settings from './Settings';
 
+
 type TabType = 'dashboard' | 'menu' | 'orders' | 'qr-codes' | 'settings';
 
 const Dashboard: React.FC = () => {
@@ -13,12 +14,26 @@ const Dashboard: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [pendingOrdersCount, setPendingOrdersCount] = useState<number>(0);
   
-  // Get active tab from URL or default to 'dashboard'
+  // Get active tab and orderId from URL or default to 'dashboard'
   const activeTab = (searchParams.get('tab') as TabType) || 'dashboard';
+  const orderIdParam = searchParams.get('orderId');
 
-  const setActiveTab = (tab: TabType) => {
-    setSearchParams({ tab });
+  const setActiveTab = (tab: TabType, orderId?: string) => {
+    const params: any = { tab };
+    if (orderId) {
+      params.orderId = orderId;
+    }
+    setSearchParams(params);
   };
+
+  // Clear orderId when switching away from orders tab
+  useEffect(() => {
+    if (activeTab !== 'orders' && orderIdParam) {
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('orderId');
+      setSearchParams(newParams);
+    }
+  }, [activeTab, orderIdParam, searchParams, setSearchParams]);
 
   // Fetch pending orders count
   useEffect(() => {
@@ -65,18 +80,52 @@ const Dashboard: React.FC = () => {
     { id: 'settings' as TabType, name: 'Settings', icon: 'ri-settings-line', mobileIcon: 'ri-settings-4-line' },
   ];
 
+  const handleQuickAction = (action: string) => {
+    switch (action) {
+      case 'menu':
+        setActiveTab('menu');
+        break;
+      case 'qr-codes':
+        setActiveTab('qr-codes');
+        break;
+      case 'orders':
+        setActiveTab('orders');
+        break;
+      case 'settings':
+        setActiveTab('settings');
+        break;
+      default:
+        break;
+    }
+  };
+
+  const handleViewAllOrders = () => {
+    setActiveTab('orders');
+  };
+
+  const handleOrderClick = (orderId: string) => {
+    setActiveTab('orders', orderId);
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case 'menu':
         return <MenuManagement />;
       case 'orders':
-        return <OrderManagement />;
+        return <OrderManagement selectedOrderId={orderIdParam} autoScroll={!!orderIdParam} />;
       case 'qr-codes':
         return <QRCodeGenerator />;
       case 'settings':
         return <Settings />;
       default:
-        return <DashboardContent pendingOrdersCount={pendingOrdersCount} />;
+        return (
+          <DashboardContent 
+            pendingOrdersCount={pendingOrdersCount} 
+            onQuickAction={handleQuickAction}
+            onViewAllOrders={handleViewAllOrders}
+            onOrderClick={handleOrderClick}
+          />
+        );
     }
   };
 
@@ -243,9 +292,17 @@ const Dashboard: React.FC = () => {
 // DashboardContent Component
 interface DashboardContentProps {
   pendingOrdersCount: number;
+  onQuickAction: (action: string) => void;
+  onViewAllOrders: () => void;
+  onOrderClick: (orderId: string) => void;
 }
 
-const DashboardContent: React.FC<DashboardContentProps> = ({ pendingOrdersCount }) => {
+const DashboardContent: React.FC<DashboardContentProps> = ({ 
+  pendingOrdersCount, 
+  onQuickAction, 
+  onViewAllOrders,
+  onOrderClick 
+}) => {
   const { user } = useAuth();
   const [stats, setStats] = useState({
     totalRevenue: 0,
@@ -551,7 +608,8 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ pendingOrdersCount 
               {quickActions.map((action, idx) => (
                 <button
                   key={idx}
-                  className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors text-left group"
+                  onClick={() => onQuickAction(action.action)}
+                  className="w-full flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors text-left group cursor-pointer"
                 >
                   <div className={`p-2 rounded-lg group-hover:scale-110 transition-transform ${
                     action.color === 'blue' ? 'bg-blue-50' :
@@ -585,7 +643,10 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ pendingOrdersCount 
                 <h3 className="text-lg font-bold text-gray-900">Recent Orders</h3>
                 <p className="text-xs text-gray-500 mt-1">Latest customer orders</p>
               </div>
-              <button className="text-sm font-semibold text-green-600 hover:text-green-700 flex items-center space-x-1">
+              <button 
+                onClick={onViewAllOrders}
+                className="text-sm font-semibold text-green-600 hover:text-green-700 flex items-center space-x-1 transition-colors cursor-pointer"
+              >
                 <span>View All</span>
                 <i className="ri-arrow-right-line"></i>
               </button>
@@ -593,14 +654,20 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ pendingOrdersCount 
             <div className="divide-y divide-gray-100">
               {recentOrders.length > 0 ? (
                 recentOrders.map((order: any, idx: number) => (
-                  <div key={idx} className="p-4 hover:bg-gray-50 transition-colors">
+                  <div 
+                    key={idx} 
+                    onClick={() => onOrderClick(order._id)}
+                    className="p-4 hover:bg-gray-50 transition-colors cursor-pointer group"
+                  >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center space-x-3">
                         <div className="h-10 w-10 bg-gradient-to-br from-blue-100 to-blue-200 rounded-lg flex items-center justify-center">
                           <i className="ri-restaurant-line text-blue-600"></i>
                         </div>
                         <div>
-                          <p className="font-semibold text-gray-900 text-sm">{order.id}</p>
+                          <p className="font-semibold text-gray-900 text-sm group-hover:text-blue-600 transition-colors">
+                            {order.id}
+                          </p>
                           <p className="text-xs text-gray-500">{order.table} • {order.items}</p>
                         </div>
                       </div>
@@ -613,7 +680,7 @@ const DashboardContent: React.FC<DashboardContentProps> = ({ pendingOrdersCount 
                       <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${getStatusColor(order.status)}`}>
                         {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
                       </span>
-                      <button className="text-xs font-semibold text-blue-600 hover:text-blue-700">
+                      <button className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors">
                         View Details →
                       </button>
                     </div>

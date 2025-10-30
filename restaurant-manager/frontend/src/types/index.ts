@@ -321,7 +321,10 @@ export interface OrderItem {
   price: number;
   specialInstructions?: string;
 }
-
+export interface OrderManagementProps {
+  selectedOrderId?: string | null;
+  autoScroll?: boolean;
+}
 export interface Order {
   _id: string;
   orderNumber: string;
