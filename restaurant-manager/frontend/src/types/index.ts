@@ -169,23 +169,25 @@ export interface MenuItemFormData {
 }
 
 export interface MenuItem {
-  id: string;
+  _id: string;
   name: string;
   description: string;
   price: number;
-  image?: string;
-  category: string | Category;
-  restaurant: string | Restaurant;
+  image?: string; // Make sure this exists
+  category: Category | string;
   ingredients: string[];
   preparationTime: number;
   isVegetarian: boolean;
-  isVegan?: boolean;
-  isGlutenFree?: boolean;
+  isVegan: boolean;
+  isGlutenFree: boolean;
   spiceLevel: number;
   isAvailable: boolean;
+  restaurant: string | Restaurant;
   createdAt?: string;
   updatedAt?: string;
 }
+
+
 
 export interface CreateMenuItemData {
   name: string;
@@ -221,7 +223,7 @@ export interface UpdateMenuItemData {
 export interface Table {
   id: string;
   tableNumber: string;
-  restaurant: string;
+  restaurant: string | Restaurant;
   capacity: number;
   location: string;
   qrCode?: string;
@@ -310,4 +312,95 @@ export interface ApiRoute {
 export interface ApiRoutesResponse {
   message: string;
   routes: ApiRoute[];
+}
+// Add to your types.ts file
+export interface OrderItem {
+  _id?: string;
+  menuItem: MenuItem; // This now includes image
+  quantity: number;
+  price: number;
+  specialInstructions?: string;
+}
+
+export interface Order {
+  _id: string;
+  orderNumber: string;
+  restaurant: Restaurant;
+  table?: {
+    _id: string;
+    tableNumber: string;
+  };
+  customerName: string;
+  customerPhone?: string;
+  items: OrderItem[];
+  totalAmount: number;
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'cancelled' | 'completed';
+  paymentStatus: 'pending' | 'paid' | 'refunded';
+  orderType: 'dine-in' | 'takeaway' | 'delivery';
+  customerNotes?: string;
+  preparationTime?: number;
+  servedAt?: string;
+  completedAt?: string;
+  paidAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+// Order related types
+export type OrderStatus = 
+  | 'pending' 
+  | 'confirmed' 
+  | 'preparing' 
+  | 'ready' 
+  | 'served' 
+  | 'completed' 
+  | 'cancelled';
+
+export type PaymentStatus = 
+  | 'pending' 
+  | 'paid' 
+  | 'refunded';
+
+export type OrderType = 
+  | 'dine-in' 
+  | 'takeaway' 
+  | 'delivery';
+
+export interface OrderItem {
+  _id?: string;
+  menuItem: MenuItem;
+  quantity: number;
+  price: number;
+  specialInstructions?: string;
+}
+
+export interface Order {
+  _id: string;
+  orderNumber: string;
+  restaurant: Restaurant;
+
+  customerName: string;
+  customerPhone?: string;
+  items: OrderItem[];
+  totalAmount: number;
+  status: OrderStatus;
+  paymentStatus: PaymentStatus;
+  orderType: OrderType;
+  customerNotes?: string;
+  preparationTime?: number;
+  servedAt?: string;
+  completedAt?: string;
+  paidAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// If you want more specific typing for table, you can also add:
+export interface Table {
+  _id: string;
+  tableNumber: string;
+  capacity: number;
+  status: 'available' | 'occupied' | 'reserved' | 'maintenance';
+  restaurant: string | Restaurant;
+  createdAt?: string;
+  updatedAt?: string;
 }

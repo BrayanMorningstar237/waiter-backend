@@ -690,6 +690,7 @@ app.post('/api/tables', async (req, res) => {
 // ORDERS ROUTES
 // ============================================================================
 
+// In your orders routes - Update the population to include images
 app.get('/api/orders', auth, async (req, res) => {
   try {
     const { status } = req.query;
@@ -704,7 +705,7 @@ app.get('/api/orders', auth, async (req, res) => {
     }
 
     const orders = await Order.find(query)
-      .populate('items.menuItem', 'name description image')
+      .populate('items.menuItem', 'name description image price') // ADD 'image' here
       .populate('table', 'tableNumber')
       .populate('restaurant', 'name')
       .sort({ createdAt: -1 });
@@ -721,13 +722,14 @@ app.get('/api/orders', auth, async (req, res) => {
   }
 });
 
+// Also update the single order endpoint
 app.get('/api/orders/:id', auth, async (req, res) => {
   try {
     const order = await Order.findOne({
       _id: req.params.id,
       restaurant: req.user.restaurant._id
     })
-      .populate('items.menuItem', 'name description image price ingredients')
+      .populate('items.menuItem', 'name description image price ingredients') // ADD 'image' here
       .populate('table', 'tableNumber')
       .populate('restaurant', 'name address phone');
 
@@ -928,6 +930,15 @@ app.put('/api/orders/:id/pay', auth, async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
+    // Auto-confirm order if it's still pending
+    if (order.status === 'pending') {
+      console.log(`🔄 Auto-confirming order from pending to confirmed`);
+      order.status = 'confirmed';
+      
+      // If confirming order, reduce inventory
+      await reduceInventory(order.items);
+    }
+
     order.paymentStatus = 'paid';
     order.paidAt = new Date();
 
@@ -937,7 +948,7 @@ app.put('/api/orders/:id/pay', auth, async (req, res) => {
       .populate('items.menuItem', 'name description image')
       .populate('table', 'tableNumber');
 
-    console.log(`✅ Order ${req.params.id} marked as paid`);
+    console.log(`✅ Order ${req.params.id} marked as paid and status updated to: ${updatedOrder.status}`);
     
     res.json({
       message: 'Order marked as paid successfully',
@@ -948,7 +959,48 @@ app.put('/api/orders/:id/pay', auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to mark order as paid', details: error.message });
   }
 });
+app.put('/api/orders/:id/unpay', auth, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant._id;
 
+    console.log(`💳 Marking order ${req.params.id} as unpaid`);
+
+    const order = await Order.findOne({
+      _id: req.params.id,
+      restaurant: restaurantId
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // If order was confirmed and we're marking it unpaid, restore inventory
+    if (order.status === 'confirmed' && order.paymentStatus === 'paid') {
+      console.log(`🔄 Restoring inventory for unpaid order`);
+      await restoreInventory(order.items);
+    }
+
+    // Reset payment status to pending and clear paidAt
+    order.paymentStatus = 'pending';
+    order.paidAt = undefined; // Clear the paid timestamp
+
+    const updatedOrder = await order.save();
+    
+    const populatedOrder = await Order.findById(updatedOrder._id)
+      .populate('items.menuItem', 'name description image')
+      .populate('table', 'tableNumber');
+
+    console.log(`✅ Order ${req.params.id} marked as unpaid`);
+    
+    res.json({
+      message: 'Order marked as unpaid successfully',
+      order: populatedOrder
+    });
+  } catch (error) {
+    console.error('❌ Failed to mark order as unpaid:', error);
+    res.status(500).json({ error: 'Failed to mark order as unpaid', details: error.message });
+  }
+});
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
