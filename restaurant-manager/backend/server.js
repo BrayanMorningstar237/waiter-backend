@@ -393,7 +393,6 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
   try {
     console.log('📦 Creating menu item with data:', req.body);
     console.log('🏪 Restaurant:', req.user.restaurant.name);
-    console.log('👤 User:', req.user.name);
     
     const menuItemData = {
       ...req.body,
@@ -405,7 +404,19 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
       isVegetarian: req.body.isVegetarian === 'true',
       isVegan: req.body.isVegan === 'true',
       isGlutenFree: req.body.isGlutenFree === 'true',
-      isAvailable: req.body.isAvailable === 'true'
+      isAvailable: req.body.isAvailable === 'true',
+      // Handle new fields
+      likes: req.body.likes ? Number(req.body.likes) : 0,
+      'nutrition.calories': req.body.calories ? Number(req.body.calories) : 0,
+      'nutrition.protein': req.body.protein ? Number(req.body.protein) : 0,
+      'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : 0,
+      'nutrition.fat': req.body.fat ? Number(req.body.fat) : 0,
+      'nutrition.fiber': req.body.fiber ? Number(req.body.fiber) : 0,
+      'nutrition.sugar': req.body.sugar ? Number(req.body.sugar) : 0,
+      'nutrition.sodium': req.body.sodium ? Number(req.body.sodium) : 0,
+      'takeaway.isTakeawayAvailable': req.body.isTakeawayAvailable === 'true',
+      'takeaway.takeawayPrice': req.body.takeawayPrice ? Number(req.body.takeawayPrice) : undefined,
+      'takeaway.packagingFee': req.body.packagingFee ? Number(req.body.packagingFee) : 0
     };
 
     if (req.file) {
@@ -445,7 +456,6 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
     }
 
     console.log('📦 Updating menu item:', req.params.id);
-    console.log('🏪 Restaurant:', req.user.restaurant.name);
 
     const updateData = {
       ...req.body,
@@ -456,7 +466,19 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
       isVegetarian: req.body.isVegetarian ? req.body.isVegetarian === 'true' : undefined,
       isVegan: req.body.isVegan ? req.body.isVegan === 'true' : undefined,
       isGlutenFree: req.body.isGlutenFree ? req.body.isGlutenFree === 'true' : undefined,
-      isAvailable: req.body.isAvailable ? req.body.isAvailable === 'true' : undefined
+      isAvailable: req.body.isAvailable ? req.body.isAvailable === 'true' : undefined,
+      // Handle new fields
+      likes: req.body.likes ? Number(req.body.likes) : undefined,
+      'nutrition.calories': req.body.calories ? Number(req.body.calories) : undefined,
+      'nutrition.protein': req.body.protein ? Number(req.body.protein) : undefined,
+      'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : undefined,
+      'nutrition.fat': req.body.fat ? Number(req.body.fat) : undefined,
+      'nutrition.fiber': req.body.fiber ? Number(req.body.fiber) : undefined,
+      'nutrition.sugar': req.body.sugar ? Number(req.body.sugar) : undefined,
+      'nutrition.sodium': req.body.sodium ? Number(req.body.sodium) : undefined,
+      'takeaway.isTakeawayAvailable': req.body.isTakeawayAvailable ? req.body.isTakeawayAvailable === 'true' : undefined,
+      'takeaway.takeawayPrice': req.body.takeawayPrice ? Number(req.body.takeawayPrice) : undefined,
+      'takeaway.packagingFee': req.body.packagingFee ? Number(req.body.packagingFee) : undefined
     };
 
     if (req.file) {
@@ -515,6 +537,145 @@ app.delete('/api/menu-items/:id', auth, async (req, res) => {
   } catch (error) {
     console.error('❌ Failed to delete menu item:', error);
     res.status(500).json({ error: 'Failed to delete menu item', details: error.message });
+  }
+});
+
+// ============================================================================
+// MENU ITEM ENGAGEMENT ROUTES
+// ============================================================================
+
+// Rate a menu item (public)
+app.post('/api/public/menu-items/:id/rate', async (req, res) => {
+  try {
+    const { rating, customerName } = req.body;
+    
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+    }
+
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    await menuItem.updateRating(rating);
+    
+    console.log(`⭐ New rating ${rating} for ${menuItem.name} from ${customerName || 'anonymous'}`);
+    
+    res.json({
+      message: 'Rating submitted successfully',
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        rating: menuItem.rating
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to submit rating:', error);
+    res.status(500).json({ error: 'Failed to submit rating', details: error.message });
+  }
+});
+
+// Like a menu item (public)
+app.post('/api/public/menu-items/:id/like', async (req, res) => {
+  try {
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    await menuItem.incrementLikes();
+    
+    console.log(`❤️ Like added to ${menuItem.name}, total: ${menuItem.likes}`);
+    
+    res.json({
+      message: 'Item liked successfully',
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        likes: menuItem.likes
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to like item:', error);
+    res.status(500).json({ error: 'Failed to like item', details: error.message });
+  }
+});
+
+// Unlike a menu item (public)
+app.post('/api/public/menu-items/:id/unlike', async (req, res) => {
+  try {
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    await menuItem.decrementLikes();
+    
+    console.log(`💔 Like removed from ${menuItem.name}, total: ${menuItem.likes}`);
+    
+    res.json({
+      message: 'Item unliked successfully',
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        likes: menuItem.likes
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to unlike item:', error);
+    res.status(500).json({ error: 'Failed to unlike item', details: error.message });
+  }
+});
+
+// Increment view count (public)
+app.post('/api/public/menu-items/:id/view', async (req, res) => {
+  try {
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    await menuItem.incrementViewCount();
+    
+    console.log(`👀 View count incremented for ${menuItem.name}, total: ${menuItem.viewCount}`);
+    
+    res.json({
+      message: 'View count updated',
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        viewCount: menuItem.viewCount
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to update view count:', error);
+    res.status(500).json({ error: 'Failed to update view count', details: error.message });
+  }
+});
+
+// Get popular menu items (public)
+app.get('/api/public/restaurants/:id/popular-items', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    const limit = parseInt(req.query.limit) || 10;
+    
+    const popularItems = await MenuItem.find({ 
+      restaurant: restaurantId,
+      isAvailable: true 
+    })
+    .sort({ popularity: -1, likes: -1, 'rating.average': -1 })
+    .limit(limit)
+    .select('name description price image rating likes popularity viewCount nutrition takeaway')
+    .populate('category', 'name');
+
+    res.json({
+      message: 'Popular items retrieved successfully',
+      popularItems
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch popular items:', error);
+    res.status(500).json({ error: 'Failed to fetch popular items', details: error.message });
   }
 });
 
@@ -690,7 +851,7 @@ app.post('/api/tables', async (req, res) => {
 // ORDERS ROUTES
 // ============================================================================
 
-// In your orders routes - Update the population to include images
+// Get orders with filtering
 app.get('/api/orders', auth, async (req, res) => {
   try {
     const { status } = req.query;
@@ -705,7 +866,7 @@ app.get('/api/orders', auth, async (req, res) => {
     }
 
     const orders = await Order.find(query)
-      .populate('items.menuItem', 'name description image price') // ADD 'image' here
+      .populate('items.menuItem', 'name description image price rating likes nutrition') // Include new fields
       .populate('table', 'tableNumber')
       .populate('restaurant', 'name')
       .sort({ createdAt: -1 });
@@ -722,14 +883,14 @@ app.get('/api/orders', auth, async (req, res) => {
   }
 });
 
-// Also update the single order endpoint
+// Get specific order
 app.get('/api/orders/:id', auth, async (req, res) => {
   try {
     const order = await Order.findOne({
       _id: req.params.id,
       restaurant: req.user.restaurant._id
     })
-      .populate('items.menuItem', 'name description image price ingredients') // ADD 'image' here
+      .populate('items.menuItem', 'name description image price ingredients rating likes nutrition') // Include new fields
       .populate('table', 'tableNumber')
       .populate('restaurant', 'name address phone');
 
@@ -806,7 +967,7 @@ app.post('/api/orders', async (req, res) => {
       orderNumber: orderNumber,
       restaurant,
       customerName: customerName.trim(),
-      table: table || null, // Include table reference if available
+      table: table || null,
       items: items.map(item => ({
         menuItem: item.menuItem,
         quantity: item.quantity,
@@ -822,11 +983,21 @@ app.post('/api/orders', async (req, res) => {
     // Save the order
     const savedOrder = await order.save();
     
+    // Increment takeaway orders count if it's a takeaway order
+    if (orderType === 'takeaway') {
+      for (const item of items) {
+        const menuItem = await MenuItem.findById(item.menuItem);
+        if (menuItem) {
+          await menuItem.incrementTakeawayOrders();
+        }
+      }
+    }
+    
     console.log('✅ Order saved successfully with ID:', savedOrder._id);
 
     // Populate the order with all details including table
     const populatedOrder = await Order.findById(savedOrder._id)
-      .populate('items.menuItem', 'name description image price category ingredients')
+      .populate('items.menuItem', 'name description image price category ingredients rating likes nutrition')
       .populate('restaurant', 'name contact address')
       .populate('table', 'tableNumber capacity status');
 
@@ -857,6 +1028,7 @@ app.post('/api/orders', async (req, res) => {
     });
   }
 });
+
 // Update order status
 app.put('/api/orders/:id/status', auth, async (req, res) => {
   try {
@@ -899,7 +1071,7 @@ app.put('/api/orders/:id/status', auth, async (req, res) => {
     const updatedOrder = await order.save();
     
     const populatedOrder = await Order.findById(updatedOrder._id)
-      .populate('items.menuItem', 'name description image')
+      .populate('items.menuItem', 'name description image rating likes')
       .populate('table', 'tableNumber');
 
     console.log(`✅ Order ${req.params.id} status updated to: ${status}`);
@@ -945,7 +1117,7 @@ app.put('/api/orders/:id/pay', auth, async (req, res) => {
     const updatedOrder = await order.save();
     
     const populatedOrder = await Order.findById(updatedOrder._id)
-      .populate('items.menuItem', 'name description image')
+      .populate('items.menuItem', 'name description image rating likes')
       .populate('table', 'tableNumber');
 
     console.log(`✅ Order ${req.params.id} marked as paid and status updated to: ${updatedOrder.status}`);
@@ -959,6 +1131,7 @@ app.put('/api/orders/:id/pay', auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to mark order as paid', details: error.message });
   }
 });
+
 app.put('/api/orders/:id/unpay', auth, async (req, res) => {
   try {
     const restaurantId = req.user.restaurant._id;
@@ -974,26 +1147,39 @@ app.put('/api/orders/:id/unpay', auth, async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    // If order was confirmed and we're marking it unpaid, restore inventory
-    if (order.status === 'confirmed' && order.paymentStatus === 'paid') {
-      console.log(`🔄 Restoring inventory for unpaid order`);
-      await restoreInventory(order.items);
+    // More restrictive - only allow unpay for orders that haven't been served
+    const allowedStatuses = ['pending', 'confirmed', 'preparing', 'ready'];
+    if (!allowedStatuses.includes(order.status)) {
+      return res.status(400).json({ 
+        error: `Cannot modify payment status for ${order.status} orders` 
+      });
     }
 
-    // Reset payment status to pending and clear paidAt
+    if (order.paymentStatus !== 'paid') {
+      return res.status(400).json({ 
+        error: 'Order is not marked as paid' 
+      });
+    }
+
+    // Restore inventory since order wasn't served
+    console.log(`🔄 Restoring inventory for unpaid order`);
+    await restoreInventory(order.items);
+
+    // Update both payment status AND order status to pending
     order.paymentStatus = 'pending';
-    order.paidAt = undefined; // Clear the paid timestamp
+    order.status = 'pending'; // Add this line to change the order status
+    order.paidAt = undefined;
 
     const updatedOrder = await order.save();
     
     const populatedOrder = await Order.findById(updatedOrder._id)
-      .populate('items.menuItem', 'name description image')
+      .populate('items.menuItem', 'name description image rating likes')
       .populate('table', 'tableNumber');
 
-    console.log(`✅ Order ${req.params.id} marked as unpaid`);
+    console.log(`✅ Order ${req.params.id} marked as unpaid and status reset to pending`);
     
     res.json({
-      message: 'Order marked as unpaid successfully',
+      message: 'Order marked as unpaid and status reset to pending',
       order: populatedOrder
     });
   } catch (error) {
@@ -1001,6 +1187,7 @@ app.put('/api/orders/:id/unpay', auth, async (req, res) => {
     res.status(500).json({ error: 'Failed to mark order as unpaid', details: error.message });
   }
 });
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
@@ -1156,6 +1343,7 @@ app.get('/api/protected-test', auth, (req, res) => {
     }
   });
 });
+
 // ============================================================================
 // PUBLIC CATEGORIES ENDPOINTS
 // ============================================================================
@@ -1260,8 +1448,7 @@ app.get('/api/public/restaurants/:id', async (req, res) => {
   }
 });
 
-
-// Get restaurant menu items (public) - FIXED VERSION
+// Get restaurant menu items (public) - UPDATED with new fields
 app.get('/api/public/restaurants/:id/menu', async (req, res) => {
   try {
     const restaurantId = req.params.id;
@@ -1274,13 +1461,13 @@ app.get('/api/public/restaurants/:id/menu', async (req, res) => {
       return res.status(404).json({ error: 'Restaurant not found or not available' });
     }
 
-    // Get available menu items AND include isAvailable field
+    // Get available menu items with new fields
     const menuItems = await MenuItem.find({ 
       restaurant: restaurantId,
       isAvailable: true 
     })
     .populate('category', 'name _id')
-    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable') // ADD isAvailable here
+    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway popularity viewCount')
     .sort('category name');
 
     console.log(`✅ Found ${menuItems.length} available menu items`);
@@ -1330,6 +1517,11 @@ app.get('/api/public/restaurants/:id/categories', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch categories', details: error.message });
   }
 });
+
+// ============================================================================
+// API ROUTES LISTING
+// ============================================================================
+
 // List all available routes
 app.get('/api', (req, res) => {
   const routes = [
@@ -1359,6 +1551,13 @@ app.get('/api', (req, res) => {
     { method: 'PUT', path: '/api/menu-items/:id', description: 'Update menu item (protected)' },
     { method: 'DELETE', path: '/api/menu-items/:id', description: 'Delete menu item (protected)' },
     
+    // Menu engagement routes (public)
+    { method: 'POST', path: '/api/public/menu-items/:id/rate', description: 'Rate a menu item' },
+    { method: 'POST', path: '/api/public/menu-items/:id/like', description: 'Like a menu item' },
+    { method: 'POST', path: '/api/public/menu-items/:id/unlike', description: 'Unlike a menu item' },
+    { method: 'POST', path: '/api/public/menu-items/:id/view', description: 'Increment view count' },
+    { method: 'GET', path: '/api/public/restaurants/:id/popular-items', description: 'Get popular menu items' },
+    
     // Category routes (protected)
     { method: 'GET', path: '/api/categories', description: 'Get categories for logged-in restaurant (protected)' },
     { method: 'POST', path: '/api/categories', description: 'Create category (protected)' },
@@ -1372,6 +1571,7 @@ app.get('/api', (req, res) => {
     { method: 'GET', path: '/api/orders/:id', description: 'Get specific order (protected)' },
     { method: 'PUT', path: '/api/orders/:id/status', description: 'Update order status (protected)' },
     { method: 'PUT', path: '/api/orders/:id/pay', description: 'Mark order as paid (protected)' },
+    { method: 'PUT', path: '/api/orders/:id/unpay', description: 'Mark order as unpaid (protected)' },
     
     // Auth routes
     { method: 'GET', path: '/api/auth', description: 'Auth base route' },
@@ -1380,7 +1580,14 @@ app.get('/api', (req, res) => {
     
     // Protected routes
     { method: 'GET', path: '/api/protected-test', description: 'Test protected route' },
-    { method: 'GET', path: '/api/my-restaurant', description: 'Get current user restaurant data (protected)' }
+    { method: 'GET', path: '/api/my-restaurant', description: 'Get current user restaurant data (protected)' },
+    
+    // Public routes
+    { method: 'GET', path: '/api/public/categories', description: 'Get unique categories for directory' },
+    { method: 'GET', path: '/api/public/restaurants/by-category/:categoryName', description: 'Get restaurants by category' },
+    { method: 'GET', path: '/api/public/restaurants/:id', description: 'Get public restaurant info' },
+    { method: 'GET', path: '/api/public/restaurants/:id/menu', description: 'Get public restaurant menu' },
+    { method: 'GET', path: '/api/public/restaurants/:id/categories', description: 'Get public restaurant categories' }
   ];
   
   res.json({ 
@@ -1397,4 +1604,5 @@ app.listen(PORT, () => {
   console.log(`🖼️ Static images served from: http://localhost:${PORT}/images`);
   console.log(`📸 Menu item images: restaurantName-itemName-YYYY-MM-DDTHH-MM-SS.ext`);
   console.log(`🖼️ Restaurant logos: logo-restaurantName-YYYY-MM-DDTHH-MM-SS.ext`);
+  console.log(`⭐ New features: Rating, Calories, Likes, Takeaway tracking integrated!`);
 });
