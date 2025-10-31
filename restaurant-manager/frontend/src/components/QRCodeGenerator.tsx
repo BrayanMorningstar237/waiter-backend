@@ -38,7 +38,9 @@ const QRCodeGenerator: React.FC = () => {
       return;
     }
 
-    if (!user.restaurant?._id) {
+    const restaurantId = user.restaurant?.id || (user.restaurant as any)?._id;
+    
+    if (!restaurantId) {
       showError('Restaurant ID not found. Please ensure you are logged in properly.');
       return;
     }
@@ -77,7 +79,9 @@ const QRCodeGenerator: React.FC = () => {
   };
 
   const generateQRCode = (): void => {
-    if (!user?.restaurant?._id) {
+    const restaurantId = user?.restaurant?.id || (user?.restaurant as any)?._id;
+    
+    if (!restaurantId) {
       showError('Restaurant ID not found. Please log in again.');
       return;
     }
@@ -92,7 +96,6 @@ const QRCodeGenerator: React.FC = () => {
     let title = '';
     let type: 'table' | 'category' | 'item' = 'table';
     const params = new URLSearchParams();
-    const restaurantId = user.restaurant._id;
 
     params.append('table', tableNumber.trim());
 
@@ -234,83 +237,58 @@ const QRCodeGenerator: React.FC = () => {
     });
   };
 
-  const getQRCodeGradient = (type: string): string => {
-    switch (type) {
-      case 'table': return 'from-blue-50 to-blue-100 border-blue-200';
-      case 'category': return 'from-green-50 to-green-100 border-green-200';
-      case 'item': return 'from-purple-50 to-purple-100 border-purple-200';
-      default: return 'from-gray-50 to-gray-100 border-gray-200';
-    }
-  };
-
-  const getQRCodeIcon = (type: string): string => {
-    switch (type) {
-      case 'table': return 'ri-table-line text-blue-600';
-      case 'category': return 'ri-folder-line text-green-600';
-      case 'item': return 'ri-restaurant-line text-purple-600';
-      default: return 'ri-qr-code-line text-gray-600';
-    }
-  };
-
-  const getBadgeColor = (type: string): string => {
-    switch (type) {
-      case 'table': return 'bg-blue-100 text-blue-700 border-blue-300';
-      case 'category': return 'bg-green-100 text-green-700 border-green-300';
-      case 'item': return 'bg-purple-100 text-purple-700 border-purple-300';
-      default: return 'bg-gray-100 text-gray-700 border-gray-300';
-    }
+  const deleteQRCode = (id: string): void => {
+    setGeneratedQRs(prev => prev.filter(qr => qr.id !== id));
+    showSuccess('QR code deleted');
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen px-4 bg-gradient-to-br from-gray-50 to-blue-50">
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
-          <i className="ri-loader-4-line text-4xl text-blue-600 animate-spin mb-4"></i>
-          <p className="text-gray-600 text-sm">Loading QR code generator...</p>
+          <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 font-medium">Loading...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 pb-20">
-      {/* Header */}
-      <div className="bg-gradient-to-br from-blue-600 to-blue-700 shadow-lg sticky top-0 z-10">
-        <div className="px-3 py-4 sm:px-6">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <div className="flex-1 min-w-0">
-              <h1 className="text-lg sm:text-2xl font-bold text-white">
-                QR Generator
-              </h1>
-              <p className="text-blue-100 text-xs sm:text-sm mt-0.5">
-                Create QR codes for tables
-              </p>
+    <div className="min-h-screen bg-gray-50">
+      {/* Top Navigation Header */}
+      <div className="sticky top-0 z-40 bg-white border-b border-gray-200 shadow-sm">
+        <div className="px-4 lg:px-8 py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-xl lg:text-2xl font-bold text-gray-900">QR Generator</h1>
+              <p className="text-sm text-gray-500 mt-0.5">Create QR codes for your restaurant</p>
             </div>
             <button
               onClick={loadMenuData}
-              className="bg-white/20 backdrop-blur text-white p-2 sm:px-4 sm:py-2.5 rounded-lg font-semibold hover:bg-white/30 transition-all flex items-center gap-2 flex-shrink-0"
+              className="w-10 h-10 lg:w-auto lg:px-4 lg:h-10 flex items-center justify-center rounded-full lg:rounded-xl bg-gray-100 hover:bg-gray-200 transition-colors lg:gap-2"
             >
-              <i className="ri-refresh-line text-lg"></i>
+              <i className="ri-refresh-line text-xl text-gray-700"></i>
+              <span className="hidden lg:inline font-semibold text-gray-700">Refresh</span>
             </button>
           </div>
-
-          {/* Tab Navigation */}
-          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 scrollbar-hide">
+          
+          {/* Tabs - Always visible */}
+          <div className="flex gap-2 overflow-x-auto mt-4 pb-1 scrollbar-hide">
             {[
-              { id: 'table', icon: 'ri-table-line', label: 'Table' },
-              { id: 'category', icon: 'ri-folder-line', label: 'Category' },
-              { id: 'item', icon: 'ri-restaurant-line', label: 'Item' }
+              { id: 'table', icon: 'ri-table-2-line', label: 'Table QR', color: 'blue' },
+              { id: 'category', icon: 'ri-folder-3-line', label: 'Category QR', color: 'emerald' },
+              { id: 'item', icon: 'ri-restaurant-2-line', label: 'Item QR', color: 'violet' }
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg font-semibold text-sm whitespace-nowrap transition-all flex-shrink-0 ${
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm whitespace-nowrap transition-all flex-shrink-0 ${
                   activeTab === tab.id
-                    ? 'bg-white text-blue-600 shadow-md'
-                    : 'bg-white/10 text-white hover:bg-white/20'
+                    ? `bg-${tab.color}-600 text-white shadow-lg shadow-${tab.color}-200`
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
-                <i className={`${tab.icon} text-base`}></i>
+                <i className={`${tab.icon} text-lg`}></i>
                 <span>{tab.label}</span>
               </button>
             ))}
@@ -319,226 +297,258 @@ const QRCodeGenerator: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div className="px-3 py-3 sm:px-6 max-w-7xl mx-auto">
-        {/* Generator Panel */}
-        <div className="bg-white rounded-xl shadow-lg border border-gray-200 mb-3">
-          <div className="p-4 space-y-4">
-            {/* Table Number Input */}
-            <div>
-              <label className="block text-sm font-semibold text-gray-900 mb-1.5">
-                Table Number/Name *
-              </label>
-              <div className="relative">
-                <i className="ri-table-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base"></i>
-                <input
-                  type="text"
-                  value={tableNumber}
-                  onChange={(e) => setTableNumber(e.target.value)}
-                  placeholder="e.g., '2', 'A1', 'Terrace'"
-                  className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                />
-              </div>
-              <p className="text-gray-500 text-xs mt-1">
-                Identifies the customer's table
-              </p>
-            </div>
-
-            {/* Dynamic Content */}
-            {activeTab === 'category' && (
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
-                  Select Category *
-                </label>
-                <div className="relative">
-                  <i className="ri-folder-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base"></i>
-                  <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm appearance-none"
-                  >
-                    <option value="">Choose a category...</option>
-                    {categories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
+      <div className="max-w-7xl mx-auto p-4 lg:p-8">
+        <div className="grid lg:grid-cols-1 xl:grid-cols-2 gap-6 lg:gap-8">
+          {/* Left Column - Generator Form and Settings */}
+          <div className="space-y-6 lg:space-y-8 w-50">
+            {/* QR Code Settings Card */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <i className="ri-settings-3-line text-blue-600"></i>
+                QR Code Settings
+              </h2>
+              
+              <div className="space-y-4">
+                {/* Table Number */}
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Table Number / Name <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <i className="ri-table-2-line absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                    <input
+                      type="text"
+                      value={tableNumber}
+                      onChange={(e) => setTableNumber(e.target.value)}
+                      placeholder="e.g., Table 5, A1, Patio"
+                      className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all outline-none"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1.5">This identifies the customer's location</p>
                 </div>
-              </div>
-            )}
 
-            {activeTab === 'item' && (
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
-                  Select Menu Item *
-                </label>
-                <div className="relative">
-                  <i className="ri-restaurant-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base"></i>
-                  <select
-                    value={selectedItem}
-                    onChange={(e) => setSelectedItem(e.target.value)}
-                    className="w-full pl-10 pr-3 py-2.5 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-sm appearance-none"
-                  >
-                    <option value="">Choose a menu item...</option>
-                    {menuItems.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} - {item.price.toLocaleString()} CFA
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {/* Generate Button */}
-            <button
-              onClick={generateQRCode}
-              disabled={
-                !tableNumber.trim() ||
-                (activeTab === 'category' && !selectedCategory) ||
-                (activeTab === 'item' && !selectedItem)
-              }
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-white py-3 px-4 rounded-lg font-bold transition-all flex items-center justify-center gap-2 shadow-md text-sm"
-            >
-              <i className="ri-qr-scan-2-line text-lg"></i>
-              Generate QR Code
-            </button>
-          </div>
-        </div>
-
-        {/* Pro Tips */}
-        <div className="bg-gradient-to-br from-amber-50 to-yellow-100 border-2 border-amber-200 rounded-xl p-3 shadow-md mb-3">
-          <div className="flex gap-2">
-            <div className="bg-amber-100 rounded-lg p-2 flex-shrink-0">
-              <i className="ri-lightbulb-flash-line text-amber-600 text-lg"></i>
-            </div>
-            <div className="flex-1">
-              <p className="text-amber-900 font-bold text-sm mb-1.5">Pro Tips</p>
-              <ul className="text-amber-800 text-xs space-y-1">
-                <li className="flex items-start gap-1.5">
-                  <i className="ri-checkbox-circle-line text-amber-600 mt-0.5 flex-shrink-0 text-sm"></i>
-                  <span>Print table QR codes for dining tables</span>
-                </li>
-                <li className="flex items-start gap-1.5">
-                  <i className="ri-checkbox-circle-line text-amber-600 mt-0.5 flex-shrink-0 text-sm"></i>
-                  <span>Category QR codes for promotions</span>
-                </li>
-                <li className="flex items-start gap-1.5">
-                  <i className="ri-checkbox-circle-line text-amber-600 mt-0.5 flex-shrink-0 text-sm"></i>
-                  <span>Item QR codes for featured specials</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        {/* Generated QR Codes */}
-        <div className="bg-white rounded-xl shadow-lg border border-gray-200">
-          <div className="p-4 border-b border-gray-100">
-            <h2 className="text-base font-bold text-gray-900">Generated Codes</h2>
-            <p className="text-gray-600 text-xs mt-0.5">
-              {generatedQRs.length} code{generatedQRs.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-
-          <div className="p-3">
-            {generatedQRs.length === 0 ? (
-              <div className="text-center py-10 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-                <div className="mb-2">
-                  <i className="ri-qr-code-line text-4xl text-gray-300"></i>
-                </div>
-                <p className="text-gray-500 text-sm font-semibold">No QR Codes Yet</p>
-                <p className="text-gray-400 text-xs mt-0.5">
-                  Generate your first code
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {generatedQRs.map((qr) => (
-                  <div
-                    key={qr.id}
-                    className={`bg-gradient-to-br ${getQRCodeGradient(qr.type)} border-2 rounded-xl p-3 transition-all`}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <div className="bg-white rounded-lg p-1.5">
-                          <i className={`${getQRCodeIcon(qr.type)} text-base`}></i>
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="font-bold text-gray-900 text-sm truncate">
-                            {qr.title}
-                          </p>
-                          <p className="text-gray-600 text-xs">
-                            Table: {qr.tableNumber}
-                          </p>
-                        </div>
-                      </div>
-                      <span className={`${getBadgeColor(qr.type)} border px-2 py-0.5 rounded-full text-xs font-bold capitalize flex-shrink-0`}>
-                        {qr.type}
-                      </span>
-                    </div>
-
-                    {/* QR Code with Logo */}
-                    <div className="bg-white rounded-lg p-3 mb-2 text-center border shadow-sm">
-                      <div className="relative inline-block">
-                        <img
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr.url)}&margin=10`}
-                          alt={`QR Code for ${qr.title}`}
-                          className="rounded-lg w-36 h-36 mx-auto"
-                        />
-                        {user?.restaurant?.logo && (
-                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white p-1 rounded-md shadow-md">
-                            <img
-                              src={user.restaurant.logo}
-                              alt="Logo"
-                              className="w-9 h-9 object-contain"
-                            />
-                          </div>
-                        )}
-                      </div>
-                      <p className="text-xs font-bold text-gray-700 mt-2">
-                        {qr.title}
-                      </p>
-                    </div>
-
-                    {/* URL */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-gray-600 font-semibold">URL:</span>
-                        <button
-                          onClick={() => copyToClipboard(qr.url)}
-                          className="text-blue-600 hover:text-blue-700 flex items-center gap-1 font-semibold"
-                        >
-                          <i className="ri-clipboard-line text-sm"></i>
-                          Copy
-                        </button>
-                      </div>
-                      <div className="text-xs text-gray-500 bg-white rounded-lg px-2 py-1.5 break-all border font-mono leading-relaxed">
-                        {qr.url}
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          onClick={() => downloadQRCode(qr)}
-                          className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm"
-                        >
-                          <i className="ri-download-line text-sm"></i>
-                          Download
-                        </button>
-                        <button
-                          onClick={() => window.open(qr.url, '_blank')}
-                          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm"
-                        >
-                          <i className="ri-eye-line text-sm"></i>
-                          Preview
-                        </button>
-                      </div>
+                {/* Category Selection */}
+                {activeTab === 'category' && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Select Category <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <i className="ri-folder-3-line absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                      <select
+                        value={selectedCategory}
+                        onChange={(e) => setSelectedCategory(e.target.value)}
+                        className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100 transition-all outline-none appearance-none bg-white"
+                      >
+                        <option value="">Choose a category...</option>
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                      <i className="ri-arrow-down-s-line absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"></i>
                     </div>
                   </div>
-                ))}
+                )}
+
+                {/* Item Selection */}
+                {activeTab === 'item' && (
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">
+                      Select Menu Item <span className="text-red-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <i className="ri-restaurant-2-line absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                      <select
+                        value={selectedItem}
+                        onChange={(e) => setSelectedItem(e.target.value)}
+                        className="w-full pl-12 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-violet-500 focus:ring-4 focus:ring-violet-100 transition-all outline-none appearance-none bg-white"
+                      >
+                        <option value="">Choose a menu item...</option>
+                        {menuItems.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} - {item.price?.toLocaleString?.() || '0'} CFA
+                          </option>
+                        ))}
+                      </select>
+                      <i className="ri-arrow-down-s-line absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"></i>
+                    </div>
+                  </div>
+                )}
+
+                {/* Generate Button */}
+                <button
+                  onClick={generateQRCode}
+                  disabled={
+                    !tableNumber.trim() ||
+                    (activeTab === 'category' && !selectedCategory) ||
+                    (activeTab === 'item' && !selectedItem)
+                  }
+                  className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed text-white rounded-xl font-bold transition-all shadow-lg shadow-blue-200 disabled:shadow-none flex items-center justify-center gap-3"
+                >
+                  <i className="ri-qr-scan-2-line text-xl"></i>
+                  Generate QR Code
+                </button>
               </div>
-            )}
+            </div>
+
+            {/* Tips Section */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
+                  <i className="ri-lightbulb-line text-amber-600"></i>
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-amber-900 mb-2">Quick Tips</p>
+                  <ul className="text-sm text-amber-800 space-y-2">
+                    <li className="flex gap-2">
+                      <i className="ri-check-line text-amber-600 mt-0.5"></i>
+                      <span>Print and place QR codes on tables for easy customer access</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <i className="ri-check-line text-amber-600 mt-0.5"></i>
+                      <span>Use category codes to highlight specific menu sections</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <i className="ri-check-line text-amber-600 mt-0.5"></i>
+                      <span>Create item codes for daily specials or featured dishes</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Generated QR Codes */}
+          <div>
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden h-full">
+              <div className="p-6 border-b border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">Generated QR Codes</h2>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      {generatedQRs.length} {generatedQRs.length === 1 ? 'code' : 'codes'} created
+                    </p>
+                  </div>
+                  {generatedQRs.length > 0 && (
+                    <button
+                      onClick={() => setGeneratedQRs([])}
+                      className="text-sm text-red-600 hover:text-red-700 font-semibold"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 max-h-[calc(100vh-300px)] lg:max-h-[calc(100vh-200px)] overflow-y-auto">
+                {generatedQRs.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="w-20 h-20 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <i className="ri-qr-code-line text-4xl text-gray-400"></i>
+                    </div>
+                    <p className="text-gray-900 font-semibold mb-1">No QR Codes Yet</p>
+                    <p className="text-sm text-gray-500">Generate your first QR code to get started</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {generatedQRs.map((qr) => (
+                      <div
+                        key={qr.id}
+                        className={`relative border-2 rounded-2xl p-4 transition-all ${
+                          qr.type === 'table' ? 'border-blue-200 bg-blue-50' :
+                          qr.type === 'category' ? 'border-emerald-200 bg-emerald-50' :
+                          'border-violet-200 bg-violet-50'
+                        }`}
+                      >
+                        {/* Header */}
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`px-2.5 py-1 rounded-lg text-xs font-bold capitalize ${
+                                qr.type === 'table' ? 'bg-blue-200 text-blue-800' :
+                                qr.type === 'category' ? 'bg-emerald-200 text-emerald-800' :
+                                'bg-violet-200 text-violet-800'
+                              }`}>
+                                {qr.type}
+                              </span>
+                            </div>
+                            <h3 className="font-bold text-gray-900">{qr.title}</h3>
+                            <p className="text-sm text-gray-600 mt-0.5">Table: {qr.tableNumber}</p>
+                          </div>
+                          <button
+                            onClick={() => deleteQRCode(qr.id)}
+                            className="w-8 h-8 rounded-lg bg-white hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors flex items-center justify-center"
+                          >
+                            <i className="ri-delete-bin-line"></i>
+                          </button>
+                        </div>
+
+                        {/* QR Code */}
+                        <div className="bg-white rounded-xl p-4 mb-4 border-2 border-gray-200">
+                          <div className="relative inline-block w-full">
+                            <img
+                              src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr.url)}&margin=10`}
+                              alt={qr.title}
+                              className="w-full rounded-lg"
+                            />
+                            {user?.restaurant?.logo && (
+                              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white p-2 rounded-lg shadow-lg border-2 border-gray-200">
+                                <img
+                                  src={user.restaurant.logo}
+                                  alt="Logo"
+                                  className="w-12 h-12 object-contain"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* URL */}
+                        <div className="bg-white rounded-xl p-3 mb-3 border border-gray-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-gray-500">URL</span>
+                            <button
+                              onClick={() => copyToClipboard(qr.url)}
+                              className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                            >
+                              <i className="ri-file-copy-line"></i>
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-xs text-gray-600 break-all font-mono leading-relaxed">
+                            {qr.url}
+                          </p>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => downloadQRCode(qr)}
+                            className="py-2.5 px-4 bg-gray-900 hover:bg-gray-800 text-white rounded-xl font-semibold text-sm transition-colors flex items-center justify-center gap-2"
+                          >
+                            <i className="ri-download-2-line"></i>
+                            Download
+                          </button>
+                          <button
+                            onClick={() => window.open(qr.url, '_blank')}
+                            className={`py-2.5 px-4 text-white rounded-xl font-semibold text-sm transition-colors flex items-center justify-center gap-2 ${
+                              qr.type === 'table' ? 'bg-blue-600 hover:bg-blue-700' :
+                              qr.type === 'category' ? 'bg-emerald-600 hover:bg-emerald-700' :
+                              'bg-violet-600 hover:bg-violet-700'
+                            }`}
+                          >
+                            <i className="ri-external-link-line"></i>
+                            Preview
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -169,6 +169,7 @@ export interface MenuItemFormData {
 }
 
 export interface MenuItem {
+  id: string;
   _id: string;
   name: string;
   description: string;
