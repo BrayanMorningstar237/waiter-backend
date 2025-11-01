@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 
@@ -18,6 +18,16 @@ interface MenuItem {
   isVegan: boolean;
   isGlutenFree: boolean;
   spiceLevel: number;
+  rating?: {
+    average: number;
+    count: number;
+  };
+  likes?: number;
+  nutrition?: {
+    calories: number;
+  };
+  takeaway?: boolean;
+  totalTakeawayPrice?: number;
 }
 
 interface Restaurant {
@@ -58,10 +68,25 @@ const CustomerMenu: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [cart, setCart] = useState<{[key: string]: number}>({});
+  const [cart, setCart] = useState<{[key: string]: { quantity: number; isTakeaway: boolean }}>({});
   const [showCart, setShowCart] = useState(false);
   const [cartAnimation, setCartAnimation] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
+  
+  // Liked items tracking
+  const [likedItems, setLikedItems] = useState<Set<string>>(new Set());
+  
+  // Rating modal state
+  const [showRatingModal, setShowRatingModal] = useState(false);
+  const [ratingItemId, setRatingItemId] = useState<string | null>(null);
+  const [userRating, setUserRating] = useState(0);
+  
+  // Takeaway modal state
+  const [showTakeawayModal, setShowTakeawayModal] = useState(false);
+  const [takeawayItemId, setTakeawayItemId] = useState<string | null>(null);
+  
+  // Item refs for scrolling
+  const itemRefs = useRef<{[key: string]: HTMLDivElement | null}>({});
   
   // Customer info modal state - only name now
   const [showCustomerModal, setShowCustomerModal] = useState(false);
@@ -79,8 +104,49 @@ const CustomerMenu: React.FC = () => {
     return searchParams.get('table') || '';
   };
 
+  // Get category from URL query parameter
+  const getCategoryFromUrl = () => {
+    const searchParams = new URLSearchParams(location.search);
+    return searchParams.get('category') || null;
+  };
+
+  // Get item ID from URL query parameter
+  const getItemIdFromUrl = () => {
+    const searchParams = new URLSearchParams(location.search);
+    return searchParams.get('item') || null;
+  };
+
   const tableNumber = getTableNumberFromUrl();
+  const urlCategory = getCategoryFromUrl();
+  const urlItemId = getItemIdFromUrl();
   const primaryColor = restaurant?.theme?.primaryColor || '#FF6B6B';
+
+  // Get or create customer ID from localStorage
+  const getCustomerId = () => {
+    let customerId = localStorage.getItem('customer_id');
+    if (!customerId) {
+      customerId = `customer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('customer_id', customerId);
+    }
+    return customerId;
+  };
+
+  // Load liked items from localStorage
+  useEffect(() => {
+    const customerId = getCustomerId();
+    const likedKey = `liked_items_${customerId}`;
+    const savedLikes = localStorage.getItem(likedKey);
+    if (savedLikes) {
+      setLikedItems(new Set(JSON.parse(savedLikes)));
+    }
+  }, []);
+
+  // Save liked items to localStorage
+  const saveLikedItems = (likes: Set<string>) => {
+    const customerId = getCustomerId();
+    const likedKey = `liked_items_${customerId}`;
+    localStorage.setItem(likedKey, JSON.stringify(Array.from(likes)));
+  };
 
   // Show custom toast function
   const showCustomerToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'success') => {
@@ -97,6 +163,31 @@ const CustomerMenu: React.FC = () => {
       loadRestaurantData();
     }
   }, [restaurantId]);
+
+  // Handle URL parameters for category and item highlighting
+  useEffect(() => {
+    if (!loading && menuItems.length > 0) {
+      // Set category from URL if present
+      if (urlCategory && categories.some(cat => cat._id === urlCategory)) {
+        setSelectedCategory(urlCategory);
+      }
+      
+      // Scroll to item if present in URL
+      if (urlItemId && itemRefs.current[urlItemId]) {
+        setTimeout(() => {
+          itemRefs.current[urlItemId]?.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+          });
+          // Add highlight animation
+          itemRefs.current[urlItemId]?.classList.add('highlight-pulse');
+          setTimeout(() => {
+            itemRefs.current[urlItemId]?.classList.remove('highlight-pulse');
+          }, 2000);
+        }, 300);
+      }
+    }
+  }, [loading, menuItems, urlCategory, urlItemId, categories]);
 
   const loadRestaurantData = async () => {
     try {
@@ -134,11 +225,46 @@ const CustomerMenu: React.FC = () => {
     return matchesCategory && matchesSearch;
   });
 
-  const addToCart = (itemId: string) => {
-    setCart(prev => ({
-      ...prev,
-      [itemId]: (prev[itemId] || 0) + 1
-    }));
+  // Calculate average rating of all menu items
+  const calculateAverageRating = () => {
+    const itemsWithRatings = menuItems.filter(item => item.rating && item.rating.count > 0);
+    if (itemsWithRatings.length === 0) return 0;
+    
+    const totalRating = itemsWithRatings.reduce((sum, item) => sum + (item.rating?.average || 0), 0);
+    return totalRating / itemsWithRatings.length;
+  };
+
+  const averageRestaurantRating = calculateAverageRating();
+
+  const addToCart = (itemId: string, isTakeaway: boolean = false) => {
+    const item = menuItems.find(mi => mi._id === itemId);
+    
+    // Check if item supports takeaway
+    if (isTakeaway && !item?.takeaway) {
+      showCustomerToast('This item is not available for takeaway', 'warning');
+      return;
+    }
+
+    setCart(prev => {
+      const existing = prev[itemId];
+      if (existing) {
+        return {
+          ...prev,
+          [itemId]: { quantity: existing.quantity + 1, isTakeaway: existing.isTakeaway }
+        };
+      } else {
+        // If item supports takeaway, ask user
+        if (item?.takeaway && !isTakeaway) {
+          setTakeawayItemId(itemId);
+          setShowTakeawayModal(true);
+          return prev; // Don't add yet, wait for user choice
+        }
+        return {
+          ...prev,
+          [itemId]: { quantity: 1, isTakeaway }
+        };
+      }
+    });
     
     // Use custom toast for success messages
     showCustomerToast('Item added to cart!', 'success');
@@ -151,8 +277,8 @@ const CustomerMenu: React.FC = () => {
   const removeFromCart = (itemId: string) => {
     setCart(prev => {
       const newCart = { ...prev };
-      if (newCart[itemId] > 1) {
-        newCart[itemId]--;
+      if (newCart[itemId].quantity > 1) {
+        newCart[itemId] = { ...newCart[itemId], quantity: newCart[itemId].quantity - 1 };
       } else {
         delete newCart[itemId];
       }
@@ -161,11 +287,22 @@ const CustomerMenu: React.FC = () => {
   };
 
   const getCartItemCount = () => {
-    return Object.values(cart).reduce((sum, count) => sum + count, 0);
+    return Object.values(cart).reduce((sum, item) => sum + item.quantity, 0);
   };
 
   const getItemQuantity = (itemId: string) => {
-    return cart[itemId] || 0;
+    return cart[itemId]?.quantity || 0;
+  };
+
+  const getItemPrice = (itemId: string) => {
+    const item = menuItems.find(mi => mi._id === itemId);
+    if (!item) return 0;
+    
+    const cartItem = cart[itemId];
+    if (cartItem?.isTakeaway && item.totalTakeawayPrice) {
+      return item.totalTakeawayPrice;
+    }
+    return item.price;
   };
 
   const handleCloseCart = () => {
@@ -182,6 +319,107 @@ const CustomerMenu: React.FC = () => {
     }
   };
 
+  // Handle like/unlike
+  const handleLike = async (itemId: string, isLiked: boolean) => {
+    try {
+      const endpoint = isLiked ? 'unlike' : 'like';
+      const response = await fetch(`http://localhost:5000/api/public/menu-items/${itemId}/${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (!response.ok) throw new Error(`Failed to ${endpoint} item`);
+
+      const data = await response.json();
+      
+      // Update local state
+      const newLikedItems = new Set(likedItems);
+      if (isLiked) {
+        newLikedItems.delete(itemId);
+      } else {
+        newLikedItems.add(itemId);
+      }
+      setLikedItems(newLikedItems);
+      saveLikedItems(newLikedItems);
+
+      // Update menu items with new like count
+      setMenuItems(prev => prev.map(item => 
+        item._id === itemId ? { ...item, likes: data.menuItem.likes } : item
+      ));
+
+      showCustomerToast(isLiked ? 'Removed from favorites' : 'Added to favorites!', 'success');
+    } catch (error: any) {
+      showCustomerToast(`Failed to update: ${error.message}`, 'error');
+    }
+  };
+
+  // Handle rating click
+  const handleRatingClick = (itemId: string) => {
+    setRatingItemId(itemId);
+    setUserRating(0);
+    setShowRatingModal(true);
+  };
+
+  // Submit rating
+  const handleSubmitRating = async () => {
+    if (!ratingItemId || userRating === 0) return;
+
+    try {
+      const customerId = getCustomerId();
+      const customerNameFromStorage = localStorage.getItem('customer_name') || customerName || 'Anonymous';
+
+      const response = await fetch(`http://localhost:5000/api/public/menu-items/${ratingItemId}/rate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rating: userRating,
+          customerName: customerNameFromStorage
+        })
+      });
+
+      if (!response.ok) throw new Error('Failed to submit rating');
+
+      const data = await response.json();
+      
+      // Update menu items with new rating
+      setMenuItems(prev => prev.map(item => 
+        item._id === ratingItemId ? { ...item, rating: data.menuItem.rating } : item
+      ));
+
+      showCustomerToast('Rating submitted successfully!', 'success');
+      setShowRatingModal(false);
+      setRatingItemId(null);
+      setUserRating(0);
+    } catch (error: any) {
+      showCustomerToast(`Failed to submit rating: ${error.message}`, 'error');
+    }
+  };
+
+  // Handle takeaway choice
+  const handleTakeawayChoice = (isTakeaway: boolean) => {
+    if (takeawayItemId) {
+      setCart(prev => ({
+        ...prev,
+        [takeawayItemId]: { quantity: 1, isTakeaway }
+      }));
+      
+      showCustomerToast(
+        isTakeaway ? 'Item added for takeaway!' : 'Item added for dine-in!', 
+        'success'
+      );
+      
+      setCartAnimation(true);
+      setTimeout(() => setCartAnimation(false), 600);
+    }
+    
+    setShowTakeawayModal(false);
+    setTakeawayItemId(null);
+  };
+
   // Handle checkout - show customer info modal
   const handleCheckout = () => {
     setShowCustomerModal(true);
@@ -193,6 +431,9 @@ const CustomerMenu: React.FC = () => {
       showCustomerToast('Please enter your name', 'error');
       return;
     }
+
+    // Save customer name to localStorage for future ratings
+    localStorage.setItem('customer_name', customerName.trim());
 
     try {
       // First, find or create the table
@@ -232,18 +473,25 @@ const CustomerMenu: React.FC = () => {
         restaurant: restaurantId,
         customerName: customerName.trim(),
         table: tableId, // Include table reference if available
-        items: Object.entries(cart).map(([itemId, quantity]) => {
+        items: Object.entries(cart).map(([itemId, cartItem]) => {
           const item = menuItems.find(mi => mi._id === itemId);
+          const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
+            ? item.totalTakeawayPrice 
+            : item?.price || 0;
+          
           return {
             menuItem: itemId,
-            quantity: quantity,
-            price: item?.price || 0,
-            specialInstructions: ""
+            quantity: cartItem.quantity,
+            price: price,
+            specialInstructions: cartItem.isTakeaway ? "Takeaway" : ""
           };
         }),
-        totalAmount: Object.entries(cart).reduce((sum, [itemId, quantity]) => {
+        totalAmount: Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
           const item = menuItems.find(mi => mi._id === itemId);
-          return sum + ((item?.price || 0) * quantity);
+          const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
+            ? item.totalTakeawayPrice 
+            : item?.price || 0;
+          return sum + (price * cartItem.quantity);
         }, 0),
         orderType: 'dine-in'
       };
@@ -318,22 +566,31 @@ const CustomerMenu: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <style>{`
+        @keyframes highlight-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 ${primaryColor}40; }
+          50% { box-shadow: 0 0 0 12px ${primaryColor}00; }
+        }
+        .highlight-pulse {
+          animation: highlight-pulse 1s ease-in-out 2;
+          border: 2px solid ${primaryColor};
+        }
+      `}</style>
+
       {/* Header */}
       <div className="w-full shadow-sm sticky top-0 z-50 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <button
-  onClick={() => {
-    // Get current query parameters
-    const searchParams = new URLSearchParams(location.search);
-    // Navigate back to restaurants with all current query parameters
-    navigate(`/waiter/restaurants?${searchParams.toString()}`);
-  }}
-  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all flex-shrink-0"
->
-  <i className="ri-arrow-left-line text-lg sm:text-xl text-gray-700"></i>
-</button>
+                onClick={() => {
+                  const searchParams = new URLSearchParams(location.search);
+                  navigate(`/waiter/restaurants?${searchParams.toString()}`);
+                }}
+                className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all flex-shrink-0"
+              >
+                <i className="ri-arrow-left-line text-lg sm:text-xl text-gray-700"></i>
+              </button>
               <div className="min-w-0 flex-1">
                 <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{restaurant.name}</h1>
                 {tableNumber && (
@@ -373,84 +630,92 @@ const CustomerMenu: React.FC = () => {
           </div>
         </div>
       </div>
-<div className="bg-white border-b border-gray-100">
-  <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5">
-    <div className="flex items-start gap-3 sm:gap-6">
-      
-      {/* Restaurant Logo */}
-      <div className="flex-shrink-0">
-        <div className="w-14 h-14 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl shadow-sm border border-orange-100 overflow-hidden flex items-center justify-center hover:shadow-md transition-shadow">
-          {restaurant.logo ? (
-            <img
-              src={`http://localhost:5000${restaurant.logo}`}
-              alt={restaurant.name}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <i className="ri-restaurant-2-line text-orange-400 text-xl sm:text-3xl"></i>
-          )}
-        </div>
-      </div>
 
-      {/* Restaurant Info - Horizontal Layout */}
-      <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-6">
-        
-        {/* Left Section: Name & Details */}
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg sm:text-2xl font-bold text-gray-900 mb-1 sm:mb-1.5 truncate">
-            {restaurant.name}
-          </h1>
-          
-          {/* Horizontal Info Row */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-gray-600">
-            {restaurant.address?.city && (
-              <div className="flex items-center gap-1.5">
-                <i className="ri-map-pin-2-line text-red-500"></i>
-                <span className="truncate max-w-[200px]">
-                  {restaurant.address.city}{restaurant.address.country && `, ${restaurant.address.country}`}
-                </span>
-              </div>
-            )}
+      <div className="bg-white border-b border-gray-100">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-5">
+          <div className="flex items-start gap-3 sm:gap-6">
             
-            {restaurant.contact?.phone && (
-              <div className="flex items-center gap-1.5">
-                <i className="ri-phone-line text-green-500"></i>
-                <span>{restaurant.contact.phone}</span>
+            {/* Restaurant Logo */}
+            <div className="flex-shrink-0">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl shadow-sm border border-orange-100 overflow-hidden flex items-center justify-center hover:shadow-md transition-shadow">
+                {restaurant.logo ? (
+                  <img
+                    src={`http://localhost:5000${restaurant.logo}`}
+                    alt={restaurant.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <i className="ri-restaurant-2-line text-orange-400 text-xl sm:text-3xl"></i>
+                )}
               </div>
-            )}
-            
-            {/* Mobile: Table and Rating on same line */}
-            <div className="flex items-center gap-2 sm:contents">
-              {tableNumber && (
-                <div className="flex items-center gap-1.5 bg-blue-50 px-2.5 py-1 rounded-full">
-                  <i className="ri-table-line text-blue-500 text-xs"></i>
-                  <span className="text-blue-700 font-medium text-xs">Table {tableNumber}</span>
-                </div>
-              )}
+            </div>
+
+            {/* Restaurant Info - Horizontal Layout */}
+            <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-6">
               
-              {/* Rating - Inline on mobile, separate on desktop */}
-              <div className="flex sm:hidden items-center gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-3 py-1 shadow-sm">
-                <i className="ri-star-fill text-amber-500 text-sm"></i>
-                <span className="text-amber-900 font-bold text-sm">4.8</span>
+              {/* Left Section: Name & Details */}
+              <div className="flex-1 min-w-0">
+                <h1 className="text-lg sm:text-2xl font-bold text-gray-900 mb-1 sm:mb-1.5 truncate">
+                  {restaurant.name}
+                </h1>
+                
+                {/* Horizontal Info Row */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-gray-600">
+                  {restaurant.address?.city && (
+                    <div className="flex items-center gap-1.5">
+                      <i className="ri-map-pin-2-line text-red-500"></i>
+                      <span className="truncate max-w-[200px]">
+                        {restaurant.address.city}{restaurant.address.country && `, ${restaurant.address.country}`}
+                      </span>
+                    </div>
+                  )}
+                  
+                  {restaurant.contact?.phone && (
+                    <div className="flex items-center gap-1.5">
+                      <i className="ri-phone-line text-green-500"></i>
+                      <span>{restaurant.contact.phone}</span>
+                    </div>
+                  )}
+                  
+                  {/* Mobile: Table and Rating on same line */}
+                  <div className="flex items-center gap-2 sm:contents">
+                    {tableNumber && (
+                      <div className="flex items-center gap-1.5 bg-blue-50 px-2.5 py-1 rounded-full">
+                        <i className="ri-table-line text-blue-500 text-xs"></i>
+                        <span className="text-blue-700 font-medium text-xs">Table {tableNumber}</span>
+                      </div>
+                    )}
+                    
+                    {/* Rating - Inline on mobile, separate on desktop */}
+                    <div className="flex sm:hidden items-center gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-3 py-1 shadow-sm">
+                      <i className="ri-star-fill text-amber-500 text-sm"></i>
+                      <span className="text-amber-900 font-bold text-sm">
+                        {averageRestaurantRating > 0 ? averageRestaurantRating.toFixed(1) : 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Section: Rating - Desktop Only */}
+              <div className="hidden sm:flex items-center gap-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-4 py-2 shadow-sm hover:shadow transition-shadow flex-shrink-0">
+                <i className="ri-star-fill text-amber-500 text-lg"></i>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-amber-900 font-bold text-lg">
+                    {averageRestaurantRating > 0 ? averageRestaurantRating.toFixed(1) : 'N/A'}
+                  </span>
+                  <span className="text-amber-600 text-xs font-medium">
+                    {averageRestaurantRating >= 4.5 ? 'Excellent' : averageRestaurantRating >= 3.5 ? 'Good' : averageRestaurantRating > 0 ? 'Fair' : 'No ratings'}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
         </div>
-
-        {/* Right Section: Rating - Desktop Only */}
-        <div className="hidden sm:flex items-center gap-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-4 py-2 shadow-sm hover:shadow transition-shadow flex-shrink-0">
-          <i className="ri-star-fill text-amber-500 text-lg"></i>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-amber-900 font-bold text-lg">4.8</span>
-            <span className="text-amber-600 text-xs font-medium">Excellent</span>
-          </div>
-        </div>
       </div>
-    </div>
-  </div>
-</div>
+
       {/* Search & Filter */}
-      <div className="max-w-7xl mx-auto lg:px-6 lg:py-4  pb-6">
+      <div className="max-w-7xl mx-auto lg:px-6 lg:py-4 pb-6">
         <div className="bg-white rounded-b-3xl rounded-t-none lg:rounded-3xl p-4 sm:p-6 shadow-sm border border-gray-100 mb-6">
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
@@ -467,121 +732,119 @@ const CustomerMenu: React.FC = () => {
             </div>
           </div>
 
-     {/* Horizontally Scrollable Category Tags */}
-<div className="mt-4 sm:mt-5">
-  <div
-    className="overflow-x-auto scrollbar-hide -mx-3 px-3"
-    style={{ WebkitOverflowScrolling: "touch" }}
-  >
-    <div
-      className="
-        flex gap-2 flex-nowrap
-        w-max sm:w-full
-        justify-start lg:justify-center
-      "
-    >
-      {/* All Button */}
-      <button
-        onClick={() => setSelectedCategory("all")}
-        className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-medium transition-all text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
-          selectedCategory === "all"
-            ? "text-white shadow-md"
-            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-        }`}
-        style={selectedCategory === "all" ? { backgroundColor: primaryColor } : {}}
-      >
-        All
-      </button>
+          {/* Horizontally Scrollable Category Tags */}
+          <div className="mt-4 sm:mt-5">
+            <div
+              className="overflow-x-auto scrollbar-hide -mx-3 px-3"
+              style={{ WebkitOverflowScrolling: "touch" }}
+            >
+              <div
+                className="
+                  flex gap-2 flex-nowrap
+                  w-max sm:w-full
+                  justify-start lg:justify-center
+                "
+              >
+                {/* All Button */}
+                <button
+                  onClick={() => setSelectedCategory("all")}
+                  className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-medium transition-all text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
+                    selectedCategory === "all"
+                      ? "text-white shadow-md"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                  style={selectedCategory === "all" ? { backgroundColor: primaryColor } : {}}
+                >
+                  All
+                </button>
 
-      {/* Dynamic Categories */}
-      {categories.map((category) => (
-        <button
-          key={category._id}
-          onClick={() => setSelectedCategory(category._id)}
-          className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-medium transition-all text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
-            selectedCategory === category._id
-              ? "text-white shadow-md"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-          }`}
-          style={
-            selectedCategory === category._id
-              ? { backgroundColor: primaryColor }
-              : {}
-          }
-        >
-          {category.name}
-        </button>
-      ))}
-    </div>
-  </div>
-</div>
-
-
+                {/* Dynamic Categories */}
+                {categories.map((category) => (
+                  <button
+                    key={category._id}
+                    onClick={() => setSelectedCategory(category._id)}
+                    className={`px-4 sm:px-6 py-2 sm:py-2.5 rounded-full font-medium transition-all text-xs sm:text-sm whitespace-nowrap flex-shrink-0 ${
+                      selectedCategory === category._id
+                        ? "text-white shadow-md"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                    style={
+                      selectedCategory === category._id
+                        ? { backgroundColor: primaryColor }
+                        : {}
+                    }
+                  >
+                    {category.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
 
           {(searchTerm || selectedCategory !== 'all') && (
-  <div className="mt-4 sm:mt-5 p-3 sm:p-4 bg-gray-50 rounded-2xl">
-    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <i className="ri-search-eye-line text-base"></i>
-          <span>
-            Found <span className="font-bold text-gray-900">{filteredItems.length}</span> items
-          </span>
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-2">
-          {searchTerm && (
-            <span className="inline-flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-gray-200 text-sm">
-              <i className="ri-search-line text-gray-400"></i>
-              <span className="text-gray-700">"{searchTerm}"</span>
-              <button
-                onClick={() => setSearchTerm('')}
-                className="w-5 h-5 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
-              >
-                <i className="ri-close-line text-xs text-gray-500"></i>
-              </button>
-            </span>
+            <div className="mt-4 sm:mt-5 p-3 sm:p-4 bg-gray-50 rounded-2xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <i className="ri-search-eye-line text-base"></i>
+                    <span>
+                      Found <span className="font-bold text-gray-900">{filteredItems.length}</span> items
+                    </span>
+                  </div>
+                  
+                  <div className="flex flex-wrap items-center gap-2">
+                    {searchTerm && (
+                      <span className="inline-flex items-center gap-2 bg-white px-3 py-1.5 rounded-full border border-gray-200 text-sm">
+                        <i className="ri-search-line text-gray-400"></i>
+                        <span className="text-gray-700">"{searchTerm}"</span>
+                        <button
+                          onClick={() => setSearchTerm('')}
+                          className="w-5 h-5 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
+                        >
+                          <i className="ri-close-line text-xs text-gray-500"></i>
+                        </button>
+                      </span>
+                    )}
+                    
+                    {selectedCategory !== 'all' && (
+                      <span 
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-medium"
+                        style={{ 
+                          borderColor: primaryColor + '40',
+                          backgroundColor: primaryColor + '10',
+                          color: primaryColor
+                        }}
+                      >
+                        <i className="ri-price-tag-3-line"></i>
+                        {categories.find(cat => cat._id === selectedCategory)?.name || 'Selected Category'}
+                        <button
+                          onClick={() => setSelectedCategory('all')}
+                          className="w-5 h-5 rounded-full flex items-center justify-center transition-colors"
+                          style={{ backgroundColor: primaryColor + '20' }}
+                        >
+                          <i className="ri-close-line text-xs" style={{ color: primaryColor }}></i>
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                </div>
+                
+                {(searchTerm || selectedCategory !== 'all') && (
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      setSelectedCategory('all');
+                    }}
+                    className="text-sm font-medium hover:underline flex justify-center items-center gap-2 text-left sm:text-right px-3 py-1.5 bg-white border border-gray-200 rounded-full hover:bg-gray-50 transition-colors"
+                    style={{ color: primaryColor }}
+                  >
+                    <i className="ri-close-line hidden lg:inline"></i>
+                    Clear all
+                  </button>
+                )}
+              </div>
+            </div>
           )}
-          
-          {selectedCategory !== 'all' && (
-            <span 
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-sm font-medium"
-              style={{ 
-                borderColor: primaryColor + '40',
-                backgroundColor: primaryColor + '10',
-                color: primaryColor
-              }}
-            >
-              <i className="ri-price-tag-3-line"></i>
-              {categories.find(cat => cat._id === selectedCategory)?.name || 'Selected Category'}
-              <button
-                onClick={() => setSelectedCategory('all')}
-                className="w-5 h-5 rounded-full flex items-center justify-center transition-colors"
-                style={{ backgroundColor: primaryColor + '20' }}
-              >
-                <i className="ri-close-line text-xs" style={{ color: primaryColor }}></i>
-              </button>
-            </span>
-          )}
-        </div>
-      </div>
-      
-      {(searchTerm || selectedCategory !== 'all') && (
-        <button
-          onClick={() => {
-            setSearchTerm('');
-            setSelectedCategory('all');
-          }}
-          className="text-sm font-medium hover:underline flex justify-center items-center gap-2 text-left sm:text-right px-3 py-1.5 bg-white border border-gray-200 rounded-full hover:bg-gray-50 transition-colors"
-          style={{ color: primaryColor }}
-        >
-          <i className="ri-close-line hidden lg:inline"></i>
-          Clear all
-        </button>
-      )}
-    </div>
-  </div>
-)}
         </div>
 
         {/* Menu Items Grid */}
@@ -606,14 +869,22 @@ const CustomerMenu: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {filteredItems.map(item => (
-              <MenuItemCard
-                key={item._id}
-                item={item}
-                quantity={getItemQuantity(item._id)}
-                onAddToCart={() => addToCart(item._id)}
-                onRemoveFromCart={() => removeFromCart(item._id)}
-                primaryColor={primaryColor}
-              />
+              <div 
+                key={item._id} 
+                ref={(el) => { itemRefs.current[item._id] = el; }}
+              >
+                <MenuItemCard
+                  item={item}
+                  quantity={getItemQuantity(item._id)}
+                  onAddToCart={() => addToCart(item._id)}
+                  onRemoveFromCart={() => removeFromCart(item._id)}
+                  primaryColor={primaryColor}
+                  isLiked={likedItems.has(item._id)}
+                  onLike={() => handleLike(item._id, likedItems.has(item._id))}
+                  onRate={() => handleRatingClick(item._id)}
+                  isTakeaway={cart[item._id]?.isTakeaway}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -667,15 +938,49 @@ const CustomerMenu: React.FC = () => {
           onSubmit={handleCustomerInfoSubmit}
           onClose={handleCloseCustomerModal}
           primaryColor={primaryColor}
-          cartItems={Object.entries(cart).map(([itemId, quantity]) => {
+          cartItems={Object.entries(cart).map(([itemId, cartItem]) => {
             const item = menuItems.find(mi => mi._id === itemId);
-            return item ? { ...item, quantity } : null;
-          }).filter(Boolean) as (MenuItem & { quantity: number })[]}
-          total={Object.entries(cart).reduce((sum, [itemId, quantity]) => {
+            return item ? { ...item, quantity: cartItem.quantity, isTakeaway: cartItem.isTakeaway } : null;
+          }).filter(Boolean) as (MenuItem & { quantity: number; isTakeaway: boolean })[]}
+          total={Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
             const item = menuItems.find(mi => mi._id === itemId);
-            return sum + ((item?.price || 0) * quantity);
+            const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
+              ? item.totalTakeawayPrice 
+              : item?.price || 0;
+            return sum + (price * cartItem.quantity);
           }, 0)}
           tableNumber={tableNumber}
+        />
+      )}
+
+      {/* Rating Modal */}
+      {showRatingModal && (
+        <RatingModal
+          itemId={ratingItemId}
+          menuItems={menuItems}
+          userRating={userRating}
+          onRatingChange={setUserRating}
+          onSubmit={handleSubmitRating}
+          onClose={() => {
+            setShowRatingModal(false);
+            setRatingItemId(null);
+            setUserRating(0);
+          }}
+          primaryColor={primaryColor}
+        />
+      )}
+
+      {/* Takeaway Modal */}
+      {showTakeawayModal && (
+        <TakeawayModal
+          itemId={takeawayItemId}
+          menuItems={menuItems}
+          onChoice={handleTakeawayChoice}
+          onClose={() => {
+            setShowTakeawayModal(false);
+            setTakeawayItemId(null);
+          }}
+          primaryColor={primaryColor}
         />
       )}
     </div>
@@ -688,6 +993,10 @@ interface MenuItemCardProps {
   onAddToCart: () => void;
   onRemoveFromCart: () => void;
   primaryColor: string;
+  isLiked: boolean;
+  onLike: () => void;
+  onRate: () => void;
+  isTakeaway?: boolean;
 }
 
 const MenuItemCard: React.FC<MenuItemCardProps> = ({ 
@@ -696,7 +1005,13 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
   onAddToCart, 
   onRemoveFromCart,
   primaryColor,
+  isLiked,
+  onLike,
+  onRate,
+  isTakeaway,
 }) => {
+  const displayPrice = isTakeaway && item.totalTakeawayPrice ? item.totalTakeawayPrice : item.price;
+  
   return (
     <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-5 shadow-sm border border-gray-100 hover:shadow-lg transition-all duration-300 group">
       <div className="relative h-36 sm:h-48 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl sm:rounded-2xl overflow-hidden mb-3 sm:mb-4">
@@ -712,14 +1027,29 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
           </div>
         )}
         
-        <button className="absolute top-2 right-2 w-8 h-8 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center shadow-sm hover:scale-105 transition-transform">
-          <i className="ri-heart-line text-gray-600 text-sm sm:text-lg"></i>
+        <button 
+          onClick={onLike}
+          className="absolute top-2 right-2 w-8 h-8 sm:w-10 sm:h-10 bg-white rounded-full flex items-center justify-center shadow-sm hover:scale-105 transition-transform"
+        >
+          <i className={`${isLiked ? 'ri-heart-fill' : 'ri-heart-line'} text-sm sm:text-lg`} style={{ color: isLiked ? primaryColor : '#6b7280' }}></i>
         </button>
 
-        <div className="absolute bottom-2 left-2 flex items-center gap-1 bg-white/95 backdrop-blur-sm px-2 py-1 sm:px-3 sm:py-1.5 rounded-full shadow-sm">
+        <div className="absolute bottom-2 left-2 flex items-center gap-1 bg-white/95 backdrop-blur-sm px-2 py-1 sm:px-3 sm:py-1.5 rounded-full shadow-sm cursor-pointer hover:bg-white transition-colors" onClick={onRate}>
           <i className="ri-star-fill text-yellow-400 text-xs sm:text-sm"></i>
-          <span className="text-xs sm:text-sm font-bold text-gray-900">4.5</span>
+          <span className="text-xs sm:text-sm font-bold text-gray-900">
+            {item.rating?.average ? item.rating.average.toFixed(1) : '0.0'}
+          </span>
+          {item.rating?.count ? (
+            <span className="text-xs text-gray-500">({item.rating.count})</span>
+          ) : null}
         </div>
+
+        {item.likes && item.likes > 0 ? (
+          <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-white/95 backdrop-blur-sm px-2 py-1 rounded-full shadow-sm">
+            <i className="ri-heart-fill text-xs" style={{ color: primaryColor }}></i>
+            <span className="text-xs font-semibold text-gray-900">{item.likes}</span>
+          </div>
+        ) : null}
 
         <div className="absolute top-2 left-2 flex flex-wrap gap-1">
           {item.isVegetarian && (
@@ -730,6 +1060,11 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
           {item.isVegan && (
             <span className="bg-emerald-500 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-sm">
               Vegan
+            </span>
+          )}
+          {isTakeaway && (
+            <span className="bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-sm">
+              Takeaway
             </span>
           )}
         </div>
@@ -748,16 +1083,21 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
           </span>
           <span className="flex items-center gap-1">
             <i className="ri-fire-line text-orange-500"></i>
-            {Math.floor(Math.random() * 200 + 150)} Kcal
+            {item.nutrition?.calories || Math.floor(Math.random() * 200 + 150)} Kcal
           </span>
         </div>
 
         <div className="flex items-center justify-between pt-1 sm:pt-2">
           <div>
             <span className="text-lg sm:text-2xl font-bold text-gray-900">
-              {item.price.toLocaleString()}
+              {displayPrice.toLocaleString()}
             </span>
             <span className="text-xs sm:text-sm font-medium text-gray-500 ml-1">CFA</span>
+            {isTakeaway && item.totalTakeawayPrice && item.totalTakeawayPrice !== item.price && (
+              <div className="text-xs text-gray-400 line-through">
+                {item.price.toLocaleString()} CFA
+              </div>
+            )}
           </div>
           
           {quantity === 0 ? (
@@ -795,9 +1135,9 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
 };
 
 interface CartModalContentProps {
-  cart: {[key: string]: number};
+  cart: {[key: string]: { quantity: number; isTakeaway: boolean }};
   menuItems: MenuItem[];
-  onUpdateCart: (cart: {[key: string]: number}) => void;
+  onUpdateCart: (cart: {[key: string]: { quantity: number; isTakeaway: boolean }}) => void;
   onClose: () => void;
   onCheckout: () => void;
   restaurant: Restaurant;
@@ -814,13 +1154,16 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
   primaryColor,
 }) => {
   const cartItems = Object.entries(cart)
-    .map(([itemId, quantity]) => {
+    .map(([itemId, cartItem]) => {
       const item = menuItems.find(mi => mi._id === itemId);
-      return item ? { ...item, quantity } : null;
+      return item ? { ...item, quantity: cartItem.quantity, isTakeaway: cartItem.isTakeaway } : null;
     })
-    .filter(Boolean) as (MenuItem & { quantity: number })[];
+    .filter(Boolean) as (MenuItem & { quantity: number; isTakeaway: boolean })[];
 
-  const total = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const total = cartItems.reduce((sum, item) => {
+    const price = item.isTakeaway && item.totalTakeawayPrice ? item.totalTakeawayPrice : item.price;
+    return sum + (price * item.quantity);
+  }, 0);
 
   const updateQuantity = (itemId: string, newQuantity: number) => {
     if (newQuantity === 0) {
@@ -828,7 +1171,7 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
       delete newCart[itemId];
       onUpdateCart(newCart);
     } else {
-      onUpdateCart({ ...cart, [itemId]: newQuantity });
+      onUpdateCart({ ...cart, [itemId]: { ...cart[itemId], quantity: newQuantity } });
     }
   };
 
@@ -862,55 +1205,64 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
           </div>
         ) : (
           <div className="space-y-3 sm:space-y-4">
-            {cartItems.map(item => (
-              <div key={item._id} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-gray-50 rounded-xl sm:rounded-2xl">
-                <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gray-200 rounded-lg sm:rounded-xl overflow-hidden flex-shrink-0">
-                  {item.image ? (
-                    <img
-                      src={`http://localhost:5000${item.image}`}
-                      alt={item.name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <i className="ri-restaurant-line text-lg sm:text-2xl text-gray-400"></i>
-                    </div>
-                  )}
+            {cartItems.map(item => {
+              const displayPrice = item.isTakeaway && item.totalTakeawayPrice ? item.totalTakeawayPrice : item.price;
+              
+              return (
+                <div key={item._id} className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-gray-50 rounded-xl sm:rounded-2xl">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gray-200 rounded-lg sm:rounded-xl overflow-hidden flex-shrink-0">
+                    {item.image ? (
+                      <img
+                        src={`http://localhost:5000${item.image}`}
+                        alt={item.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <i className="ri-restaurant-line text-lg sm:text-2xl text-gray-400"></i>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-gray-900 text-sm sm:text-base truncate">{item.name}</h3>
+                    {item.isTakeaway && (
+                      <span className="inline-block text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full mt-1">
+                        Takeaway
+                      </span>
+                    )}
+                    <p className="font-bold text-sm sm:text-base mt-1" style={{ color: primaryColor }}>
+                      {displayPrice.toLocaleString()} CFA
+                    </p>
+                  </div>
+                  
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <button
+                      onClick={() => updateQuantity(item._id, item.quantity - 1)}
+                      className="w-6 h-6 sm:w-8 sm:h-8 bg-white rounded-full flex items-center justify-center shadow-sm hover:shadow-md transition-all"
+                    >
+                      <i className="ri-subtract-line text-gray-700 text-xs"></i>
+                    </button>
+                    <span className="font-bold text-gray-900 min-w-4 sm:min-w-6 text-center text-sm sm:text-base">
+                      {item.quantity}
+                    </span>
+                    <button
+                      onClick={() => updateQuantity(item._id, item.quantity + 1)}
+                      className="w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-white shadow-sm hover:shadow-md transition-all"
+                      style={{ backgroundColor: primaryColor }}
+                    >
+                      <i className="ri-add-line text-xs"></i>
+                    </button>
+                  </div>
+                  
+                  <div className="text-right min-w-16 sm:min-w-20">
+                    <p className="font-bold text-gray-900 text-sm sm:text-base">
+                      {(displayPrice * item.quantity).toLocaleString()} CFA
+                    </p>
+                  </div>
                 </div>
-                
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-gray-900 text-sm sm:text-base truncate">{item.name}</h3>
-                  <p className="font-bold text-sm sm:text-base" style={{ color: primaryColor }}>
-                    {item.price.toLocaleString()} CFA
-                  </p>
-                </div>
-                
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <button
-                    onClick={() => updateQuantity(item._id, item.quantity - 1)}
-                    className="w-6 h-6 sm:w-8 sm:h-8 bg-white rounded-full flex items-center justify-center shadow-sm hover:shadow-md transition-all"
-                  >
-                    <i className="ri-subtract-line text-gray-700 text-xs"></i>
-                  </button>
-                  <span className="font-bold text-gray-900 min-w-4 sm:min-w-6 text-center text-sm sm:text-base">
-                    {item.quantity}
-                  </span>
-                  <button
-                    onClick={() => updateQuantity(item._id, item.quantity + 1)}
-                    className="w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-white shadow-sm hover:shadow-md transition-all"
-                    style={{ backgroundColor: primaryColor }}
-                  >
-                    <i className="ri-add-line text-xs"></i>
-                  </button>
-                </div>
-                
-                <div className="text-right min-w-16 sm:min-w-20">
-                  <p className="font-bold text-gray-900 text-sm sm:text-base">
-                    {(item.price * item.quantity).toLocaleString()} CFA
-                  </p>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -950,7 +1302,7 @@ interface CustomerInfoModalProps {
   onSubmit: () => void;
   onClose: () => void;
   primaryColor: string;
-  cartItems: (MenuItem & { quantity: number })[];
+  cartItems: (MenuItem & { quantity: number; isTakeaway: boolean })[];
   total: number;
   tableNumber: string;
 }
@@ -1001,16 +1353,20 @@ const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
               </div>
             )}
             <div className="space-y-2 max-h-40 overflow-y-auto">
-              {cartItems.map(item => (
-                <div key={item._id} className="flex justify-between items-center text-sm">
-                  <span className="text-gray-600">
-                    {item.quantity}x {item.name}
-                  </span>
-                  <span className="font-medium text-gray-900">
-                    {(item.price * item.quantity).toLocaleString()} CFA
-                  </span>
-                </div>
-              ))}
+              {cartItems.map(item => {
+                const displayPrice = item.isTakeaway && item.totalTakeawayPrice ? item.totalTakeawayPrice : item.price;
+                return (
+                  <div key={item._id} className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">
+                      {item.quantity}x {item.name}
+                      {item.isTakeaway && <span className="text-blue-600 ml-1">(Takeaway)</span>}
+                    </span>
+                    <span className="font-medium text-gray-900">
+                      {(displayPrice * item.quantity).toLocaleString()} CFA
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             <div className="border-t border-gray-200 mt-3 pt-3">
               <div className="flex justify-between items-center font-semibold">
@@ -1048,6 +1404,122 @@ const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
             style={{ backgroundColor: primaryColor }}
           >
             Confirm Order
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Rating Modal Component
+interface RatingModalProps {
+  itemId: string | null;
+  menuItems: MenuItem[];
+  userRating: number;
+  onRatingChange: (rating: number) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+  primaryColor: string;
+}
+
+const RatingModal: React.FC<RatingModalProps> = ({
+  itemId,
+  menuItems,
+  userRating,
+  onRatingChange,
+  onSubmit,
+  onClose,
+  primaryColor
+}) => {
+  const item = menuItems.find(mi => mi._id === itemId);
+  
+  if (!item) return null;
+
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out"
+      onClick={handleBackdropClick}
+    >
+      <div className="bg-white w-full max-w-md overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
+        <div className="p-6 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-gray-900">Rate this Item</h2>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <i className="ri-close-line text-lg text-gray-700"></i>
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6">
+          {/* Item Info */}
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden flex-shrink-0">
+              {item.image ? (
+                <img
+                  src={`http://localhost:5000${item.image}`}
+                  alt={item.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <i className="ri-restaurant-line text-2xl text-gray-400"></i>
+                </div>
+              )}
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-900">{item.name}</h3>
+              <p className="text-sm text-gray-500">
+                Current: {item.rating?.average ? item.rating.average.toFixed(1) : 'No ratings yet'}
+                {item.rating?.count ? ` (${item.rating.count} reviews)` : ''}
+              </p>
+            </div>
+          </div>
+
+          {/* Star Rating */}
+          <div className="text-center mb-6">
+            <p className="text-sm font-medium text-gray-700 mb-4">How would you rate this item?</p>
+            <div className="flex justify-center gap-2">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  onClick={() => onRatingChange(star)}
+                  className="transition-transform hover:scale-110"
+                >
+                  <i 
+                    className={`${star <= userRating ? 'ri-star-fill' : 'ri-star-line'} text-4xl`}
+                    style={{ color: star <= userRating ? '#FCD34D' : '#D1D5DB' }}
+                  ></i>
+                </button>
+              ))}
+            </div>
+            {userRating > 0 && (
+              <p className="mt-3 text-sm font-medium" style={{ color: primaryColor }}>
+                {userRating === 1 && 'Poor'}
+                {userRating === 2 && 'Fair'}
+                {userRating === 3 && 'Good'}
+                {userRating === 4 && 'Very Good'}
+                {userRating === 5 && 'Excellent'}
+              </p>
+            )}
+          </div>
+
+          {/* Submit Button */}
+          <button
+            onClick={onSubmit}
+            disabled={userRating === 0}
+            className="w-full text-white py-4 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ backgroundColor: primaryColor }}
+          >
+            Submit Rating
           </button>
         </div>
       </div>
@@ -1116,6 +1588,146 @@ const CustomerMenuToast: React.FC<CustomerMenuToastProps> = ({
         <p className="font-medium text-sm" style={{ color: primaryColor }}>
           {message}
         </p>
+      </div>
+    </div>
+  );
+};
+
+// Takeaway Modal Component
+interface TakeawayModalProps {
+  itemId: string | null;
+  menuItems: MenuItem[];
+  onChoice: (isTakeaway: boolean) => void;
+  onClose: () => void;
+  primaryColor: string;
+}
+
+const TakeawayModal: React.FC<TakeawayModalProps> = ({
+  itemId,
+  menuItems,
+  onChoice,
+  onClose,
+  primaryColor
+}) => {
+  const item = menuItems.find(mi => mi._id === itemId);
+  
+  if (!item) return null;
+
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
+  const priceDifference = item.totalTakeawayPrice && item.totalTakeawayPrice !== item.price
+    ? item.totalTakeawayPrice - item.price
+    : 0;
+
+  return (
+    <div 
+      className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out"
+      onClick={handleBackdropClick}
+    >
+      <div className="bg-white w-full max-w-md overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
+        <div className="p-6 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-gray-900">Choose Dining Option</h2>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <i className="ri-close-line text-lg text-gray-700"></i>
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6">
+          {/* Item Info */}
+          <div className="flex items-center gap-4 mb-6 p-4 bg-gray-50 rounded-2xl">
+            <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden flex-shrink-0">
+              {item.image ? (
+                <img
+                  src={`http://localhost:5000${item.image}`}
+                  alt={item.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <i className="ri-restaurant-line text-2xl text-gray-400"></i>
+                </div>
+              )}
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-900">{item.name}</h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Choose how you'd like to enjoy this item
+              </p>
+            </div>
+          </div>
+
+          {/* Options */}
+          <div className="space-y-3">
+            {/* Dine-in Option */}
+            <button
+              onClick={() => onChoice(false)}
+              className="w-full p-4 rounded-2xl border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 transition-all text-left group"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center group-hover:bg-green-200 transition-colors">
+                    <i className="ri-restaurant-line text-green-600 text-2xl"></i>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-gray-900">Dine In</h4>
+                    <p className="text-sm text-gray-500">Enjoy at the restaurant</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-lg" style={{ color: primaryColor }}>
+                    {item.price.toLocaleString()} CFA
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            {/* Takeaway Option */}
+            <button
+              onClick={() => onChoice(true)}
+              className="w-full p-4 rounded-2xl border-2 border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center group-hover:bg-blue-200 transition-colors">
+                    <i className="ri-shopping-bag-line text-blue-600 text-2xl"></i>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-gray-900">Takeaway</h4>
+                    <p className="text-sm text-gray-500">Take it to go</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-lg text-blue-600">
+                    {item.totalTakeawayPrice?.toLocaleString() || item.price.toLocaleString()} CFA
+                  </p>
+                  {priceDifference !== 0 && (
+                    <p className="text-xs text-gray-500">
+                      {priceDifference > 0 ? `+${priceDifference.toLocaleString()}` : `${priceDifference.toLocaleString()}`} CFA
+                    </p>
+                  )}
+                </div>
+              </div>
+            </button>
+          </div>
+
+          {item.totalTakeawayPrice && item.totalTakeawayPrice !== item.price && (
+            <div className="mt-4 p-3 bg-blue-50 rounded-xl">
+              <p className="text-xs text-blue-800 text-center">
+                <i className="ri-information-line mr-1"></i>
+                Takeaway includes packaging charges
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -369,22 +369,67 @@ app.get('/api/menu-items', auth, async (req, res) => {
   }
 });
 
-app.get('/api/menu-items/:id', async (req, res) => {
+// Update menu item (protected)
+app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
-    const menuItem = await MenuItem.findById(req.params.id)
-      .populate('category', 'name')
-      .populate('restaurant', 'name');
+    const existingItem = await MenuItem.findById(req.params.id);
+    if (!existingItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    if (existingItem.restaurant.toString() !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ error: 'Access denied - menu item does not belong to your restaurant' });
+    }
+
+    console.log('📦 Updating menu item:', req.params.id);
+
+    const updateData = {
+      ...req.body,
+      ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
+      price: req.body.price ? Number(req.body.price) : undefined,
+      preparationTime: req.body.preparationTime ? Number(req.body.preparationTime) : undefined,
+      spiceLevel: req.body.spiceLevel ? Number(req.body.spiceLevel) : undefined,
+      isVegetarian: req.body.isVegetarian ? req.body.isVegetarian === 'true' : undefined,
+      isVegan: req.body.isVegan ? req.body.isVegan === 'true' : undefined,
+      isGlutenFree: req.body.isGlutenFree ? req.body.isGlutenFree === 'true' : undefined,
+      isAvailable: req.body.isAvailable ? req.body.isAvailable === 'true' : undefined,
+      // Handle new fields
+      'nutrition.calories': req.body.calories ? Number(req.body.calories) : undefined,
+      'nutrition.protein': req.body.protein ? Number(req.body.protein) : undefined,
+      'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : undefined,
+      'nutrition.fat': req.body.fat ? Number(req.body.fat) : undefined,
+      'nutrition.fiber': req.body.fiber ? Number(req.body.fiber) : undefined,
+      'nutrition.sugar': req.body.sugar ? Number(req.body.sugar) : undefined,
+      'nutrition.sodium': req.body.sodium ? Number(req.body.sodium) : undefined,
+      'takeaway.isTakeawayAvailable': req.body.isTakeawayAvailable ? req.body.isTakeawayAvailable === 'true' : undefined,
+      'takeaway.takeawayPrice': req.body.takeawayPrice ? Number(req.body.takeawayPrice) : undefined,
+      'takeaway.packagingFee': req.body.packagingFee ? Number(req.body.packagingFee) : undefined
+    };
+
+    if (req.file) {
+      updateData.image = `/images/menu-items/${req.file.filename}`;
+      console.log('📸 New image saved:', req.file.filename);
+    }
+
+    const menuItem = await MenuItem.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true }
+    ).populate('category', 'name').populate('restaurant', 'name');
     
     if (!menuItem) {
       return res.status(404).json({ error: 'Menu item not found' });
     }
 
+    console.log('✅ Menu item updated successfully:', menuItem.name);
+    
     res.json({
-      message: 'Menu item retrieved successfully',
+      message: 'Menu item updated successfully',
       menuItem
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch menu item', details: error.message });
+    console.error('❌ Failed to update menu item:', error);
+    res.status(500).json({ error: 'Failed to update menu item', details: error.message });
   }
 });
 
@@ -406,7 +451,6 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
       isGlutenFree: req.body.isGlutenFree === 'true',
       isAvailable: req.body.isAvailable === 'true',
       // Handle new fields
-      likes: req.body.likes ? Number(req.body.likes) : 0,
       'nutrition.calories': req.body.calories ? Number(req.body.calories) : 0,
       'nutrition.protein': req.body.protein ? Number(req.body.protein) : 0,
       'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : 0,
@@ -468,7 +512,6 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
       isGlutenFree: req.body.isGlutenFree ? req.body.isGlutenFree === 'true' : undefined,
       isAvailable: req.body.isAvailable ? req.body.isAvailable === 'true' : undefined,
       // Handle new fields
-      likes: req.body.likes ? Number(req.body.likes) : undefined,
       'nutrition.calories': req.body.calories ? Number(req.body.calories) : undefined,
       'nutrition.protein': req.body.protein ? Number(req.body.protein) : undefined,
       'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : undefined,
@@ -1467,7 +1510,7 @@ app.get('/api/public/restaurants/:id/menu', async (req, res) => {
       isAvailable: true 
     })
     .populate('category', 'name _id')
-    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway popularity viewCount')
+    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway totalTakeawayPrice popularity viewCount')
     .sort('category name');
 
     console.log(`✅ Found ${menuItems.length} available menu items`);

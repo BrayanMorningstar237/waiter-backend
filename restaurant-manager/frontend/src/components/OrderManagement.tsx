@@ -1,16 +1,15 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import type { Order, OrderStatus } from '../types';
 
-// Add props interface for OrderManagement
 interface OrderManagementProps {
   selectedOrderId?: string | null;
   autoScroll?: boolean;
 }
 
 const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, autoScroll = false }) => {
-  const { user } = useAuth(); // Removed unused 'restaurant'
+  const { user } = useAuth();
   const { showSuccess, showError } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,6 +29,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
   const [showRipple, setShowRipple] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
+  // Memoized filtered orders for better performance
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
       const matchesPayment = activeTab === 'paid' 
@@ -52,33 +52,8 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     [orders]
   );
 
-  useEffect(() => {
-    loadOrders();
-  }, []);
-
-  // Add effect to handle auto-scrolling to selected order
-  useEffect(() => {
-    if (selectedOrderId && autoScroll && filteredOrders.length > 0) {
-      // Small delay to ensure DOM is rendered
-      setTimeout(() => {
-        const orderElement = document.getElementById(`order-${selectedOrderId}`);
-        if (orderElement) {
-          orderElement.scrollIntoView({ 
-            behavior: 'smooth', 
-            block: 'center' 
-          });
-          
-          // Add highlight effect
-          orderElement.classList.add('animate-pulse-green');
-          setTimeout(() => {
-            orderElement.classList.remove('animate-pulse-green');
-          }, 3000);
-        }
-      }, 500);
-    }
-  }, [selectedOrderId, autoScroll, filteredOrders]);
-
-  const loadOrders = async () => {
+  // Optimized load function
+  const loadOrders = useCallback(async () => {
     if (!user) {
       showError('No user found');
       return;
@@ -86,12 +61,18 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
 
     try {
       setLoading(true);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const response = await fetch(`http://localhost:5000/api/orders?status=all`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
-        }
+        },
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch orders: ${response.status}`);
@@ -100,15 +81,49 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       const data = await response.json();
       setOrders(data.orders || []);
     } catch (error: any) {
-      console.error('❌ Failed to load orders:', error);
-      showError(`Failed to load orders: ${error.message}`);
+      if (error.name !== 'AbortError') {
+        console.error('❌ Failed to load orders:', error);
+        showError(`Failed to load orders: ${error.message}`);
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, showError]);
 
-  const updateOrderStatus = async (orderId: string, newStatus: OrderStatus) => {
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
+
+  // Auto-scroll effect - optimized with dependency array
+  useEffect(() => {
+    if (selectedOrderId && autoScroll && filteredOrders.length > 0) {
+      const timer = setTimeout(() => {
+        const orderElement = document.getElementById(`order-${selectedOrderId}`);
+        if (orderElement) {
+          orderElement.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'center' 
+          });
+          
+          orderElement.classList.add('animate-pulse-green');
+          setTimeout(() => {
+            orderElement.classList.remove('animate-pulse-green');
+          }, 3000);
+        }
+      }, 300);
+
+      return () => clearTimeout(timer);
+    }
+  }, [selectedOrderId, autoScroll, filteredOrders.length]); // Only depend on length, not the entire array
+
+  // Optimized status update
+  const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus) => {
     try {
+      // Optimistic update
+      setOrders(prev => prev.map(order => 
+        order._id === orderId ? { ...order, status: newStatus } : order
+      ));
+
       const response = await fetch(`http://localhost:5000/api/orders/${orderId}/status`, {
         method: 'PUT',
         headers: {
@@ -118,25 +133,53 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         body: JSON.stringify({ status: newStatus })
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to update order: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Failed to update order: ${response.status}`);
 
       const updatedOrder = await response.json();
       
+      // Final update with server data
       setOrders(prev => prev.map(order => 
         order._id === orderId ? updatedOrder.order : order
       ));
       
       showSuccess(`Order updated to ${newStatus}`);
     } catch (error: any) {
+      // Revert optimistic update on error
+      setOrders(prev => prev.map(order => 
+        order._id === orderId ? { ...order, status: orders.find(o => o._id === orderId)?.status || 'pending' } : order
+      ));
+      
       console.error('❌ Failed to update order status:', error);
       showError(`Failed to update order: ${error.message}`);
     }
-  };
+  }, [showSuccess, showError, orders]);
 
-  const markAsPaid = async (orderId: string) => {
+  // Optimized payment actions with better state transitions
+  const markAsPaid = useCallback(async (orderId: string) => {
     try {
+      // Optimistic update - immediately move to paid state
+      const orderToMove = orders.find(order => order._id === orderId);
+      if (!orderToMove) return;
+
+      const updatedOrder = { ...orderToMove, paymentStatus: 'paid' as const };
+      
+      setOrders(prev => {
+        const filtered = prev.filter(order => order._id !== orderId);
+        return [updatedOrder, ...filtered];
+      });
+      
+      setRecentlyPaidId(orderId);
+      setShowRipple(true);
+      
+      // Switch to paid tab after a short delay
+      setTimeout(() => {
+        setShowRipple(false);
+        setActiveTab('paid');
+      }, 600);
+      
+      setTimeout(() => setRecentlyPaidId(null), 3000);
+      
+      // Backend update
       const response = await fetch(`http://localhost:5000/api/orders/${orderId}/pay`, {
         method: 'PUT',
         headers: {
@@ -145,65 +188,70 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         }
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to mark as paid: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Failed to mark as paid: ${response.status}`);
 
-      const updatedOrder = await response.json();
+      const serverUpdatedOrder = await response.json();
       
-      setOrders(prev => {
-        const filtered = prev.filter(order => order._id !== orderId);
-        return [updatedOrder.order, ...filtered];
-      });
-      
-      setRecentlyPaidId(orderId);
-      setShowRipple(true);
-      setTimeout(() => setShowRipple(false), 1000);
-      
-      setTimeout(() => {
-        setActiveTab('paid');
-      }, 1000);
-      
-      setTimeout(() => {
-        setRecentlyPaidId(null);
-      }, 4000);
+      // Final sync with server data
+      setOrders(prev => prev.map(order => 
+        order._id === orderId ? serverUpdatedOrder.order : order
+      ));
       
       showSuccess('Order marked as paid!');
     } catch (error: any) {
+      // Revert optimistic update on error
+      setOrders(prev => {
+        const orderToRevert = orders.find(order => order._id === orderId);
+        if (!orderToRevert) return prev;
+        
+        return prev.map(order => 
+          order._id === orderId ? { ...order, paymentStatus: 'pending' } : order
+        );
+      });
+      
       console.error('❌ Failed to mark order as paid:', error);
       showError(`Failed to mark as paid: ${error.message}`);
     }
-  };
+  }, [showSuccess, showError, orders]);
 
-  const markAsUnpaid = async (orderId: string) => {
+  const markAsUnpaid = useCallback(async (orderId: string) => {
     try {
+      // Optimistic update
+      setOrders(prev => prev.map(order => 
+        order._id === orderId ? { ...order, paymentStatus: 'pending' } : order
+      ));
+
       const response = await fetch(`http://localhost:5000/api/orders/${orderId}/unpay`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ paymentStatus: 'pending' })
+        }
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to mark as unpaid: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Failed to mark as unpaid: ${response.status}`);
 
       const updatedOrder = await response.json();
       
+      // Final update with server data
       setOrders(prev => prev.map(order => 
         order._id === orderId ? updatedOrder.order : order
       ));
       
       showSuccess('Order marked as unpaid');
     } catch (error: any) {
+      // Revert optimistic update
+      setOrders(prev => prev.map(order => 
+        order._id === orderId ? { ...order, paymentStatus: orders.find(o => o._id === orderId)?.paymentStatus || 'pending' } : order
+      ));
+      
       console.error('❌ Failed to mark order as unpaid:', error);
       showError(`Failed to mark as unpaid: ${error.message}`);
     }
-  };
+  }, [showSuccess, showError, orders]);
 
-  const loadStats = async (timeRange: string = 'today') => {
+  // Stats functions - memoized to prevent unnecessary recalculations
+  const loadStats = useCallback(async (timeRange: string = 'today') => {
     try {
       setStatsLoading(true);
       
@@ -229,7 +277,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     } finally {
       setStatsLoading(false);
     }
-  };
+  }, [orders, customDateRange, showCustomDateRange, showError]);
 
   const filterOrdersByTimeRange = (orders: Order[], timeRange: string): Order[] => {
     const now = new Date();
@@ -296,12 +344,12 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     };
   };
 
-  const openStatsModal = async () => {
+  const openStatsModal = useCallback(async () => {
     setShowStatsModal(true);
     await loadStats(statsTimeRange);
-  };
+  }, [loadStats, statsTimeRange]);
 
-  const handleTimeRangeChange = async (range: string) => {
+  const handleTimeRangeChange = useCallback(async (range: string) => {
     setStatsTimeRange(range);
     if (range === 'custom') {
       setShowCustomDateRange(true);
@@ -309,22 +357,20 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       setShowCustomDateRange(false);
       await loadStats(range);
     }
-  };
+  }, [loadStats]);
 
+  // Memoized total revenue calculation
+  const totalRevenue = useMemo(() => 
+    orders
+      .filter(order => order.paymentStatus === 'paid')
+      .reduce((sum, order) => sum + order.totalAmount, 0),
+    [orders]
+  );
+
+  // YouTube-style loading component
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-64">
-        <div className="text-center">
-          <i className="ri-loader-4-line text-4xl text-yellow-500 animate-spin mb-4"></i>
-          <p className="text-gray-600">Loading orders...</p>
-        </div>
-      </div>
-    );
+    return <OrderManagementSkeleton />;
   }
-
-  const totalRevenue = orders
-    .filter(order => order.paymentStatus === 'paid')
-    .reduce((sum, order) => sum + order.totalAmount, 0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-white">
@@ -332,161 +378,73 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         
         {/* Compact Header */}
         <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 sm:p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center">
-                <i className="ri-restaurant-2-line text-green-600 mr-2"></i>
-                Orders
-              </h1>
-              <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{orders.length} total orders</p>
-              <div className="text-lg sm:text-xl font-bold bg-gradient-to-r from-green-700 to-green-600 bg-clip-text text-transparent mt-1"><span className='hidden lg:inline'>Total</span> Revenue: {totalRevenue.toLocaleString()} CFA</div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <i className="ri-restaurant-2-line text-green-600 text-xl"></i>
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Orders</h1>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-gray-500">{orders.length} total orders</span>
+                <span className="text-lg font-bold bg-gradient-to-r from-green-700 to-green-600 bg-clip-text text-transparent">
+                  Revenue: {totalRevenue.toLocaleString()} CFA
+                </span>
+              </div>
             </div>
-            <div className="flex items-center space-x-2 sm:space-x-3">
+            <div className="flex items-center gap-2">
               <button
                 onClick={openStatsModal}
-                className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-3 sm:px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center space-x-1 sm:space-x-2"
+                className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-3 sm:px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-1 sm:gap-2 text-sm font-semibold"
               >
-                <i className="ri-bar-chart-line text-base sm:text-lg"></i>
-                <span className="text-xs sm:text-sm font-semibold hidden sm:inline">Analytics</span>
+                <i className="ri-bar-chart-line"></i>
+                <span className="hidden sm:inline">Analytics</span>
               </button>
               <button
                 onClick={() => setShowFilters(!showFilters)}
-                className={`px-3 sm:px-4 py-2 rounded-xl transition-all flex items-center space-x-1 sm:space-x-2 ${
+                className={`px-3 sm:px-4 py-2 rounded-xl transition-all flex items-center gap-1 sm:gap-2 text-sm font-semibold ${
                   showFilters 
                     ? 'bg-gray-900 text-white' 
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                <i className="ri-filter-3-line text-base sm:text-lg"></i>
-                <span className="text-xs sm:text-sm font-semibold hidden sm:inline">Filter</span>
+                <i className="ri-filter-3-line"></i>
+                <span className="hidden sm:inline">Filter</span>
               </button>
             </div>
           </div>
         </div>
 
         {/* Payment Status Tabs */}
-        <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-2">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setActiveTab('unpaid')}
-              className={`relative px-4 py-3 rounded-xl font-semibold transition-all ${
-                activeTab === 'unpaid'
-                  ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg scale-105'
-                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              <div className="flex items-center justify-center space-x-2">
-                <i className="ri-time-line text-lg"></i>
-                <span className="text-sm sm:text-base">Unpaid</span>
-                {unpaidCount > 0 && (
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                    activeTab === 'unpaid' ? 'bg-white text-orange-500' : 'bg-orange-100 text-orange-600'
-                  }`}>
-                    {unpaidCount}
-                  </span>
-                )}
-              </div>
-            </button>
-            
-            <button
-              onClick={() => setActiveTab('paid')}
-              className={`relative px-4 py-3 rounded-xl font-semibold transition-all ${
-                activeTab === 'paid'
-                  ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg scale-105'
-                  : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              {showRipple && (
-                <span className="absolute inset-0 rounded-xl bg-green-400 animate-ping opacity-75"></span>
-              )}
-              <div className="relative flex items-center justify-center space-x-2">
-                <i className="ri-checkbox-circle-line text-lg"></i>
-                <span className="text-sm sm:text-base">Paid</span>
-                {paidCount > 0 && (
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
-                    activeTab === 'paid' ? 'bg-white text-green-500' : 'bg-green-100 text-green-600'
-                  }`}>
-                    {paidCount}
-                  </span>
-                )}
-              </div>
-            </button>
-          </div>
-        </div>
+        <PaymentTabs
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          unpaidCount={unpaidCount}
+          paidCount={paidCount}
+          showRipple={showRipple}
+        />
 
-        {/* Compact Filters - Collapsible */}
+        {/* Compact Filters */}
         {showFilters && (
-          <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 animate-fade-in">
-            <div className="space-y-3">
-              {/* Status Pills */}
-              <div>
-                <label className="text-xs font-semibold text-gray-700 mb-2 block">Status:</label>
-                <div className="flex flex-wrap gap-2">
-                  {['all', 'pending', 'confirmed', 'preparing', 'ready', 'served'].map(status => (
-                    <button
-                      key={status}
-                      onClick={() => setSelectedStatus(status)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        selectedStatus === status
-                          ? 'bg-yellow-400 text-gray-900 shadow-md scale-105'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      {status.charAt(0).toUpperCase() + status.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Table Search */}
-              <div>
-                <label className="text-xs font-semibold text-gray-700 mb-2 block">Table:</label>
-                <input
-                  type="text"
-                  placeholder="Search table..."
-                  value={tableFilter}
-                  onChange={(e) => setTableFilter(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400"
-                />
-              </div>
-            </div>
-          </div>
+          <OrderFilters
+            selectedStatus={selectedStatus}
+            setSelectedStatus={setSelectedStatus}
+            tableFilter={tableFilter}
+            setTableFilter={setTableFilter}
+          />
         )}
 
-        {/* Orders List */}
-        <div className="space-y-3">
-          {filteredOrders.length === 0 ? (
-            <div className="bg-white rounded-2xl p-8 text-center shadow-md border border-gray-100">
-              <div className="w-20 h-20 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-                <i className="ri-shopping-bag-line text-4xl text-gray-300"></i>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No {activeTab} orders</h3>
-              <p className="text-sm text-gray-500">
-                {selectedStatus !== 'all' || tableFilter
-                  ? 'Try adjusting your filters' 
-                  : `No ${activeTab} orders available`
-                }
-              </p>
-            </div>
-          ) : (
-            filteredOrders.map((order, index) => (
-              <div
-                key={order._id}
-                className="animate-fade-in-up"
-                style={{ animationDelay: `${index * 30}ms` }}
-              >
-                <OrderCard
-                  order={order}
-                  onUpdateStatus={updateOrderStatus}
-                  onMarkAsPaid={markAsPaid}
-                  onMarkAsUnpaid={markAsUnpaid}
-                  isRecentlyPaid={order._id === recentlyPaidId}
-                  isSelected={order._id === selectedOrderId && autoScroll}
-                />
-              </div>
-            ))
-          )}
-        </div>
+        {/* Orders Grid */}
+        <OrdersGrid
+          orders={filteredOrders}
+          activeTab={activeTab}
+          selectedStatus={selectedStatus}
+          tableFilter={tableFilter}
+          selectedOrderId={selectedOrderId}
+          recentlyPaidId={recentlyPaidId}
+          onUpdateStatus={updateOrderStatus}
+          onMarkAsPaid={markAsPaid}
+          onMarkAsUnpaid={markAsUnpaid}
+        />
       </div>
 
       {/* Statistics Modal */}
@@ -554,7 +512,226 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
   );
 };
 
-// Order Card Component
+// Memoized Sub-Components to prevent unnecessary re-renders
+
+const OrderManagementSkeleton = memo(() => (
+  <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-white">
+    <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 space-y-3 sm:space-y-4">
+      {/* Header Skeleton */}
+      <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 sm:p-5">
+        <div className="flex items-center justify-between">
+          <div className="space-y-2">
+            <div className="h-6 w-48 bg-gray-200 rounded-lg animate-pulse"></div>
+            <div className="h-4 w-32 bg-gray-200 rounded animate-pulse"></div>
+          </div>
+          <div className="flex space-x-2">
+            <div className="h-10 w-24 bg-gray-200 rounded-xl animate-pulse"></div>
+            <div className="h-10 w-24 bg-gray-200 rounded-xl animate-pulse"></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs Skeleton */}
+      <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-2">
+        <div className="flex gap-2">
+          <div className="flex-1 h-12 bg-gray-200 rounded-xl animate-pulse"></div>
+          <div className="flex-1 h-12 bg-gray-200 rounded-xl animate-pulse"></div>
+        </div>
+      </div>
+
+      {/* Order Cards Skeleton */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+        {[...Array(6)].map((_, index) => (
+          <div key={index} className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 animate-pulse">
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-start space-x-3 flex-1">
+                <div className="w-10 h-10 bg-gray-200 rounded-xl"></div>
+                <div className="flex-1 space-y-2">
+                  <div className="h-5 w-32 bg-gray-200 rounded"></div>
+                  <div className="h-4 w-24 bg-gray-200 rounded"></div>
+                </div>
+              </div>
+              <div className="h-8 w-20 bg-gray-200 rounded"></div>
+            </div>
+            <div className="space-y-2">
+              <div className="h-4 w-full bg-gray-200 rounded"></div>
+              <div className="h-4 w-3/4 bg-gray-200 rounded"></div>
+            </div>
+            <div className="flex gap-2 mt-3">
+              <div className="flex-1 h-10 bg-gray-200 rounded-xl"></div>
+              <div className="w-24 h-10 bg-gray-200 rounded-xl"></div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+));
+
+interface PaymentTabsProps {
+  activeTab: 'unpaid' | 'paid';
+  setActiveTab: (tab: 'unpaid' | 'paid') => void;
+  unpaidCount: number;
+  paidCount: number;
+  showRipple: boolean;
+}
+
+const PaymentTabs = memo(({ activeTab, setActiveTab, unpaidCount, paidCount, showRipple }: PaymentTabsProps) => (
+  <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-2">
+    <div className="flex gap-2">
+      <button
+        onClick={() => setActiveTab('unpaid')}
+        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 sm:px-4 sm:py-3 
+        rounded-xl font-semibold transition-all text-sm sm:text-base whitespace-nowrap
+        ${activeTab === 'unpaid'
+          ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg scale-[1.02]'
+          : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+        }`}
+      >
+        <i className="ri-time-line"></i>
+        <span>Unpaid</span>
+        {unpaidCount > 0 && (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold
+            ${activeTab === 'unpaid'
+              ? 'bg-white text-orange-500'
+              : 'bg-orange-100 text-orange-600'
+            }`}
+          >
+            {unpaidCount}
+          </span>
+        )}
+      </button>
+      
+      <button
+        onClick={() => setActiveTab('paid')}
+        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 sm:px-4 sm:py-3 
+        rounded-xl font-semibold transition-all text-sm sm:text-base whitespace-nowrap
+        ${activeTab === 'paid'
+          ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg scale-[1.02]'
+          : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+        }`}
+      >
+        {showRipple && (
+          <span className="absolute inset-0 rounded-xl bg-green-400 animate-ping opacity-75"></span>
+        )}
+        <i className="ri-checkbox-circle-line"></i>
+        <span>Paid</span>
+        {paidCount > 0 && (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold
+            ${activeTab === 'paid'
+              ? 'bg-white text-green-500'
+              : 'bg-green-100 text-green-600'
+            }`}
+          >
+            {paidCount}
+          </span>
+        )}
+      </button>
+    </div>
+  </div>
+));
+
+interface OrderFiltersProps {
+  selectedStatus: string;
+  setSelectedStatus: (status: string) => void;
+  tableFilter: string;
+  setTableFilter: (filter: string) => void;
+}
+
+const OrderFilters = memo(({ selectedStatus, setSelectedStatus, tableFilter, setTableFilter }: OrderFiltersProps) => (
+  <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 animate-fade-in">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Status Filter */}
+      <div>
+        <label className="text-xs font-semibold text-gray-700 mb-2 block">Status</label>
+        <select
+          value={selectedStatus}
+          onChange={(e) => setSelectedStatus(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 bg-white"
+        >
+          <option value="all">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="preparing">Preparing</option>
+          <option value="ready">Ready</option>
+          <option value="served">Served</option>
+        </select>
+      </div>
+
+      {/* Table Filter */}
+      <div>
+        <label className="text-xs font-semibold text-gray-700 mb-2 block">Table Number</label>
+        <input
+          type="text"
+          placeholder="Search table..."
+          value={tableFilter}
+          onChange={(e) => setTableFilter(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400"
+        />
+      </div>
+    </div>
+  </div>
+));
+
+interface OrdersGridProps {
+  orders: Order[];
+  activeTab: 'unpaid' | 'paid';
+  selectedStatus: string;
+  tableFilter: string;
+  selectedOrderId?: string | null;
+  recentlyPaidId: string | null;
+  onUpdateStatus: (orderId: string, newStatus: OrderStatus) => void;
+  onMarkAsPaid: (orderId: string) => void;
+  onMarkAsUnpaid: (orderId: string) => void;
+}
+
+const OrdersGrid = memo(({ 
+  orders, 
+  activeTab, 
+  selectedStatus, 
+  tableFilter, 
+  selectedOrderId, 
+  recentlyPaidId, 
+  onUpdateStatus, 
+  onMarkAsPaid, 
+  onMarkAsUnpaid 
+}: OrdersGridProps) => {
+  if (orders.length === 0) {
+    return (
+      <div className="col-span-full bg-white rounded-2xl p-8 text-center shadow-md border border-gray-100">
+        <div className="w-20 h-20 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
+          <i className="ri-shopping-bag-line text-4xl text-gray-300"></i>
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">No {activeTab} orders</h3>
+        <p className="text-sm text-gray-500">
+          {selectedStatus !== 'all' || tableFilter
+            ? 'Try adjusting your filters' 
+            : `No ${activeTab} orders available`
+          }
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+      {orders.map((order, index) => (
+        <OrderCard
+          key={order._id}
+          order={order}
+          onUpdateStatus={onUpdateStatus}
+          onMarkAsPaid={onMarkAsPaid}
+          onMarkAsUnpaid={onMarkAsUnpaid}
+          isRecentlyPaid={order._id === recentlyPaidId}
+          isSelected={order._id === selectedOrderId}
+          animationDelay={index * 50}
+        />
+      ))}
+    </div>
+  );
+});
+
+// Order Card Component (memoized)
 interface OrderCardProps {
   order: Order;
   onUpdateStatus: (orderId: string, newStatus: OrderStatus) => void;
@@ -562,16 +739,18 @@ interface OrderCardProps {
   onMarkAsUnpaid: (orderId: string) => void;
   isRecentlyPaid?: boolean;
   isSelected?: boolean;
+  animationDelay?: number;
 }
 
-const OrderCard: React.FC<OrderCardProps> = ({ 
+const OrderCard = memo(({ 
   order, 
   onUpdateStatus, 
   onMarkAsPaid, 
   onMarkAsUnpaid,
   isRecentlyPaid = false,
-  isSelected = false
-}) => {
+  isSelected = false,
+  animationDelay = 0
+}: OrderCardProps) => {
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus>(order.status);
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -621,30 +800,26 @@ const OrderCard: React.FC<OrderCardProps> = ({
   return (
     <div 
       id={`order-${order._id}`}
-      className={`bg-white rounded-2xl shadow-md border-2 transition-all overflow-hidden ${
+      className={`bg-white rounded-2xl shadow-md border-2 transition-all overflow-hidden animate-fade-in-up ${
         isRecentlyPaid 
           ? 'border-green-400 bg-gradient-to-br from-green-50 to-emerald-50 animate-pulse-green' 
           : isSelected
           ? 'border-blue-400 bg-gradient-to-br from-blue-50 to-blue-100 animate-highlight-blue'
-          : 'border-gray-100 hover:shadow-lg'
+          : 'border-gray-100 hover:shadow-lg hover:border-gray-200'
       }`}
+      style={{ animationDelay: `${animationDelay}ms` }}
     >
       
-      {/* Recently Paid Badge */}
-      {isRecentlyPaid && (
-        <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 flex items-center justify-center space-x-2">
-          <i className="ri-checkbox-circle-fill animate-bounce"></i>
-          <span className="text-sm font-bold">Just Paid!</span>
-          <i className="ri-checkbox-circle-fill animate-bounce"></i>
-        </div>
-      )}
-
-      {/* Selected Order Badge */}
-      {isSelected && (
-        <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-2 flex items-center justify-center space-x-2">
-          <i className="ri-arrow-right-line animate-pulse"></i>
-          <span className="text-sm font-bold">Selected Order</span>
-          <i className="ri-arrow-left-line animate-pulse"></i>
+      {/* Status Badges */}
+      {(isRecentlyPaid || isSelected) && (
+        <div className={`px-4 py-2 flex items-center justify-center space-x-2 text-sm font-bold ${
+          isRecentlyPaid 
+            ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white' 
+            : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
+        }`}>
+          <i className={`${isRecentlyPaid ? 'ri-checkbox-circle-fill animate-bounce' : 'ri-arrow-right-line animate-pulse'}`}></i>
+          <span>{isRecentlyPaid ? 'Just Paid!' : 'Selected Order'}</span>
+          <i className={`${isRecentlyPaid ? 'ri-checkbox-circle-fill animate-bounce' : 'ri-arrow-left-line animate-pulse'}`}></i>
         </div>
       )}
 
@@ -656,7 +831,7 @@ const OrderCard: React.FC<OrderCardProps> = ({
               <i className={`${getStatusIcon(order.status)} text-lg`}></i>
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-bold text-gray-900 text-base sm:text-lg">#{order.orderNumber}</h3>
+              <h3 className="font-bold text-gray-900 text-base">#{order.orderNumber}</h3>
               <p className="text-xs text-gray-500">{formatTime(order.createdAt)}</p>
               <div className="flex items-center space-x-2 mt-1">
                 <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
@@ -671,7 +846,7 @@ const OrderCard: React.FC<OrderCardProps> = ({
             </div>
           </div>
           <div className="text-right">
-            <div className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-yellow-600 to-orange-600 bg-clip-text text-transparent">
+            <div className="text-xl font-bold bg-gradient-to-r from-yellow-600 to-orange-600 bg-clip-text text-transparent">
               {order.totalAmount.toLocaleString()}
             </div>
             <div className="text-xs text-gray-500">CFA</div>
@@ -680,15 +855,15 @@ const OrderCard: React.FC<OrderCardProps> = ({
 
         {/* Customer Info */}
         <div className="bg-gray-50 rounded-xl p-3 mb-3">
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 text-sm">
             <i className="ri-user-line text-gray-400"></i>
-            <span className="text-sm font-medium text-gray-700">{order.customerName || 'Walk-in'}</span>
+            <span className="font-medium text-gray-700">{order.customerName || 'Walk-in'}</span>
             <span className="text-xs text-gray-400">•</span>
             <span className="text-xs text-gray-500 capitalize">{order.orderType}</span>
           </div>
         </div>
 
-        {/* Items with Images */}
+        {/* Items Preview */}
         <div className="space-y-2 mb-3">
           {order.items.slice(0, isExpanded ? undefined : 2).map((item: any) => (
             <div key={item._id} className="flex items-center space-x-3 p-2 bg-gradient-to-r from-orange-50 to-yellow-50 rounded-xl border border-orange-100">
@@ -698,41 +873,35 @@ const OrderCard: React.FC<OrderCardProps> = ({
                   <img
                     src={`http://localhost:5000${item.menuItem.image}`}
                     alt={item.menuItem.name}
-                    className="w-14 h-14 sm:w-16 sm:h-16 object-cover rounded-lg shadow-md"
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
-                      (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
-                    }}
+                    className="w-12 h-12 object-cover rounded-lg shadow-md"
+                    loading="lazy"
                   />
-                ) : null}
-                <div className={`w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-yellow-200 to-orange-200 rounded-lg flex items-center justify-center shadow-md ${item.menuItem?.image ? 'hidden' : ''}`}>
-                  <i className="ri-restaurant-line text-orange-600 text-2xl"></i>
-                </div>
+                ) : (
+                  <div className="w-12 h-12 bg-gradient-to-br from-yellow-200 to-orange-200 rounded-lg flex items-center justify-center shadow-md">
+                    <i className="ri-restaurant-line text-orange-600 text-lg"></i>
+                  </div>
+                )}
               </div>
               
               {/* Item Details */}
               <div className="flex-1 min-w-0">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      {item.menuItem?.name}
-                    </p>
-                    <p className="text-xs text-gray-600">
-                      <span className="font-medium text-orange-600">{item.quantity}x</span> @ {item.price.toLocaleString()} CFA
-                    </p>
-                    {item.specialInstructions && (
-                      <p className="text-xs text-blue-600 italic mt-0.5 line-clamp-1">
-                        📝 {item.specialInstructions}
-                      </p>
-                    )}
-                  </div>
-                  <div className="text-right ml-2">
-                    <p className="text-sm font-bold text-gray-900">
-                      {(item.quantity * item.price).toLocaleString()}
-                    </p>
-                    <p className="text-xs text-gray-500">CFA</p>
-                  </div>
-                </div>
+                <p className="text-sm font-semibold text-gray-900 truncate">
+                  {item.menuItem?.name}
+                </p>
+                <p className="text-xs text-gray-600">
+                  <span className="font-medium text-orange-600">{item.quantity}x</span> @ {item.price.toLocaleString()} CFA
+                </p>
+                {item.specialInstructions && (
+                  <p className="text-xs text-blue-600 italic mt-0.5 line-clamp-1">
+                    📝 {item.specialInstructions}
+                  </p>
+                )}
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-bold text-gray-900">
+                  {(item.quantity * item.price).toLocaleString()}
+                </p>
+                <p className="text-xs text-gray-500">CFA</p>
               </div>
             </div>
           ))}
@@ -750,46 +919,42 @@ const OrderCard: React.FC<OrderCardProps> = ({
 
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-gray-100">
-          <div className="flex-1">
-            <select
-              value={selectedStatus}
-              onChange={(e) => handleStatusChange(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 bg-white"
-            >
-              {statusOptions.map(status => (
-                <option key={status} value={status}>
-                  {status.charAt(0).toUpperCase() + status.slice(1)}
-                </option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={selectedStatus}
+            onChange={(e) => handleStatusChange(e.target.value)}
+            className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 bg-white"
+          >
+            {statusOptions.map(status => (
+              <option key={status} value={status}>
+                {status.charAt(0).toUpperCase() + status.slice(1)}
+              </option>
+            ))}
+          </select>
 
-          <div className="flex gap-2">
-            {order.paymentStatus === 'pending' && order.status !== 'cancelled' && (
-              <button
-                onClick={() => onMarkAsPaid(order._id)}
-                className="flex-1 sm:flex-none bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-xl font-semibold hover:shadow-lg transition-all hover:scale-105 active:scale-95 flex items-center justify-center space-x-1"
-              >
-                <i className="ri-checkbox-circle-line"></i>
-                <span className="text-sm">Mark Paid</span>
-              </button>
-            )}
-            
-            {order.paymentStatus === 'paid' && (
-              <button
-                onClick={() => onMarkAsUnpaid(order._id)}
-                className="flex-1 sm:flex-none bg-gradient-to-r from-orange-500 to-red-500 text-white px-4 py-2 rounded-xl font-semibold hover:shadow-lg transition-all hover:scale-105 active:scale-95 flex items-center justify-center space-x-1"
-              >
-                <i className="ri-close-circle-line"></i>
-                <span className="text-sm">Mark Unpaid</span>
-              </button>
-            )}
-          </div>
+          {order.paymentStatus === 'pending' && order.status !== 'cancelled' && (
+            <button
+              onClick={() => onMarkAsPaid(order._id)}
+              className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-xl font-semibold hover:shadow-lg transition-all hover:scale-105 active:scale-95 flex items-center justify-center space-x-1 text-sm"
+            >
+              <i className="ri-checkbox-circle-line"></i>
+              <span>Mark Paid</span>
+            </button>
+          )}
+          
+          {order.paymentStatus === 'paid' && (
+            <button
+              onClick={() => onMarkAsUnpaid(order._id)}
+              className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-4 py-2 rounded-xl font-semibold hover:shadow-lg transition-all hover:scale-105 active:scale-95 flex items-center justify-center space-x-1 text-sm"
+            >
+              <i className="ri-close-circle-line"></i>
+              <span>Mark Unpaid</span>
+            </button>
+          )}
         </div>
       </div>
     </div>
   );
-};
+});
 
 // Stats Modal Component
 interface StatsModalProps {
@@ -901,8 +1066,12 @@ const StatsModal: React.FC<StatsModalProps> = ({
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <div className="text-center">
-                <i className="ri-loader-4-line text-5xl text-yellow-500 animate-spin mb-4"></i>
-                <p className="text-gray-600">Loading analytics...</p>
+                <div className="flex space-x-2 justify-center items-center">
+                  <div className="w-3 h-3 bg-yellow-500 rounded-full animate-bounce"></div>
+                  <div className="w-3 h-3 bg-yellow-500 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                  <div className="w-3 h-3 bg-yellow-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                </div>
+                <p className="text-gray-600 mt-4">Loading analytics...</p>
               </div>
             </div>
           ) : statsData ? (

@@ -19,8 +19,8 @@ export interface User {
   email: string;
   role: 'admin' | 'staff';
   restaurant: Restaurant;
-  phone?: string; // Added phone field
-  isActive?: boolean; // Added isActive field
+  phone?: string;
+  isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -35,21 +35,21 @@ export interface Restaurant {
     city: string;
     state: string;
     zipCode: string;
-    country?: string; // Added country field
+    country?: string;
   };
   contact?: {
     phone: string;
     email: string;
-    website?: string; // Added website field
+    website?: string;
   };
   theme?: {
     primaryColor: string;
     secondaryColor: string;
-    backgroundColor?: string; // Added for theme settings
-    textColor?: string; // Added for theme settings
-    accentColor?: string; // Added for theme settings
+    backgroundColor?: string;
+    textColor?: string;
+    accentColor?: string;
   };
-  operatingHours?: { // Added operating hours
+  operatingHours?: {
     monday: { open: string; close: string };
     tuesday: { open: string; close: string };
     wednesday: { open: string; close: string };
@@ -58,12 +58,12 @@ export interface Restaurant {
     saturday: { open: string; close: string };
     sunday: { open: string; close: string };
   };
-  isActive?: boolean; // Added isActive field
+  isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
 
-// Settings Types - ADD THESE NEW INTERFACES
+// Settings Types
 export interface RestaurantSettings {
   name: string;
   description?: string;
@@ -145,7 +145,7 @@ export interface AuthResponse {
   user: User;
 }
 
-// Menu Types
+// Menu Types - UPDATED WITH NEW FIELDS
 export interface Category {
   id: string;
   name: string;
@@ -155,6 +155,39 @@ export interface Category {
   isPredefined?: boolean;
 }
 
+// NEW: Nutrition interface
+export interface Nutrition {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  fiber: number;
+  sugar: number;
+  sodium: number;
+}
+
+// NEW: Rating interface
+export interface Rating {
+  average: number;
+  count: number;
+  distribution: {
+    1: number;
+    2: number;
+    3: number;
+    4: number;
+    5: number;
+  };
+}
+
+// NEW: Takeaway interface
+export interface Takeaway {
+  isTakeawayAvailable: boolean;
+  takeawayPrice: number;
+  packagingFee: number;
+  takeawayOrdersCount: number;
+}
+
+// UPDATED: MenuItemFormData with new fields
 export interface MenuItemFormData {
   name: string;
   description: string;
@@ -166,15 +199,27 @@ export interface MenuItemFormData {
   isVegan: boolean;
   isGlutenFree: boolean;
   spiceLevel: number;
+  // NEW FIELDS
+  isTakeawayAvailable: boolean;
+  takeawayPrice: number;
+  packagingFee: number;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  fiber: number;
+  sugar: number;
+  sodium: number;
 }
 
+// UPDATED: MenuItem interface with new fields
 export interface MenuItem {
   id: string;
   _id: string;
   name: string;
   description: string;
   price: number;
-  image?: string; // Make sure this exists
+  image?: string;
   category: Category | string;
   ingredients: string[];
   preparationTime: number;
@@ -184,11 +229,17 @@ export interface MenuItem {
   spiceLevel: number;
   isAvailable: boolean;
   restaurant: string | Restaurant;
+  // NEW FIELDS
+  rating?: Rating;
+  nutrition?: Nutrition;
+  takeaway?: Takeaway;
+  likes?: number;
+  popularity?: number;
+  viewCount?: number;
+  orderCount?: number;
   createdAt?: string;
   updatedAt?: string;
 }
-
-
 
 export interface CreateMenuItemData {
   name: string;
@@ -204,6 +255,17 @@ export interface CreateMenuItemData {
   spiceLevel: number;
   image?: string;
   isAvailable?: boolean;
+  // NEW FIELDS
+  isTakeawayAvailable?: boolean;
+  takeawayPrice?: number;
+  packagingFee?: number;
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  fiber?: number;
+  sugar?: number;
+  sodium?: number;
 }
 
 export interface UpdateMenuItemData {
@@ -219,6 +281,17 @@ export interface UpdateMenuItemData {
   spiceLevel?: number;
   image?: string;
   isAvailable?: boolean;
+  // NEW FIELDS
+  isTakeawayAvailable?: boolean;
+  takeawayPrice?: number;
+  packagingFee?: number;
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+  fiber?: number;
+  sugar?: number;
+  sodium?: number;
 }
 
 export interface Table {
@@ -314,41 +387,7 @@ export interface ApiRoutesResponse {
   message: string;
   routes: ApiRoute[];
 }
-// Add to your types.ts file
-export interface OrderItem {
-  _id?: string;
-  menuItem: MenuItem; // This now includes image
-  quantity: number;
-  price: number;
-  specialInstructions?: string;
-}
-export interface OrderManagementProps {
-  selectedOrderId?: string | null;
-  autoScroll?: boolean;
-}
-export interface Order {
-  _id: string;
-  orderNumber: string;
-  restaurant: Restaurant;
-  table?: {
-    _id: string;
-    tableNumber: string;
-  };
-  customerName: string;
-  customerPhone?: string;
-  items: OrderItem[];
-  totalAmount: number;
-  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'cancelled' | 'completed';
-  paymentStatus: 'pending' | 'paid' | 'refunded';
-  orderType: 'dine-in' | 'takeaway' | 'delivery';
-  customerNotes?: string;
-  preparationTime?: number;
-  servedAt?: string;
-  completedAt?: string;
-  paidAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
+
 // Order related types
 export type OrderStatus = 
   | 'pending' 
@@ -381,7 +420,10 @@ export interface Order {
   _id: string;
   orderNumber: string;
   restaurant: Restaurant;
-
+  table?: { // Add this optional table property
+    _id: string;
+    tableNumber: string;
+  };
   customerName: string;
   customerPhone?: string;
   items: OrderItem[];
@@ -398,7 +440,6 @@ export interface Order {
   updatedAt: string;
 }
 
-// If you want more specific typing for table, you can also add:
 export interface Table {
   _id: string;
   tableNumber: string;
@@ -407,4 +448,9 @@ export interface Table {
   restaurant: string | Restaurant;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface OrderManagementProps {
+  selectedOrderId?: string | null;
+  autoScroll?: boolean;
 }

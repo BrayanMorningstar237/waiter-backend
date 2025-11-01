@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { menuService } from '../services/menu';
-import type { MenuItem, Category, CreateMenuItemData, UpdateMenuItemData ,MenuItemFormData} from '../types';
+import type { MenuItem, Category, CreateMenuItemData, UpdateMenuItemData, MenuItemFormData } from '../types';
 import { useToast } from '../contexts/ToastContext';
 
 const MenuManagement: React.FC = () => {
@@ -18,11 +18,27 @@ const MenuManagement: React.FC = () => {
   const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
   const [tempFormData, setTempFormData] = useState<any>(null);
 
-  useEffect(() => {
-    loadMenuData();
+  // Memoize data processing
+  const processMenuItems = useCallback((rawMenuItems: any[]) => {
+    return rawMenuItems.map((item: any) => ({
+      ...item,
+      id: item.id || item._id,
+      category: item.category?._id ? {
+        id: item.category._id,
+        name: item.category.name
+      } : item.category
+    }));
   }, []);
 
-  const loadMenuData = async () => {
+  const processCategories = useCallback((rawCategories: any[]) => {
+    return rawCategories.map((category: any) => ({
+      ...category,
+      id: category.id || category._id
+    }));
+  }, []);
+
+  // Optimized data loading with parallel requests and minimal processing
+  const loadMenuData = useCallback(async () => {
     if (!user) {
       showError('No user found');
       return;
@@ -31,30 +47,23 @@ const MenuManagement: React.FC = () => {
     try {
       setLoading(true);
       
+      // Parallel API calls for faster loading
       const [menuResponse, categoriesResponse] = await Promise.all([
         menuService.getMenuItems(),
         menuService.getCategories()
       ]);
       
+      // Extract data with fallbacks
       const rawMenuItems = menuResponse?.menuItems || menuResponse?.data?.menuItems || menuResponse?.data || [];
       const rawCategories = categoriesResponse?.categories || categoriesResponse?.data?.categories || categoriesResponse?.data || [];
       
-      const menuItems = rawMenuItems.map((item: any) => ({
-        ...item,
-        id: item.id || item._id,
-        category: item.category?._id ? {
-          id: item.category._id,
-          name: item.category.name
-        } : item.category
-      }));
+      // Process data efficiently
+      const processedMenuItems = processMenuItems(rawMenuItems);
+      const processedCategories = processCategories(rawCategories);
       
-      const categories = rawCategories.map((category: any) => ({
-        ...category,
-        id: category.id || category._id
-      }));
-      
-      setMenuItems(menuItems);
-      setCategories(categories);
+      // Batch state updates
+      setMenuItems(processedMenuItems);
+      setCategories(processedCategories);
     } catch (error: any) {
       if (error.response?.status === 401) {
         showError('Authentication failed. Please log in again.');
@@ -64,20 +73,33 @@ const MenuManagement: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, showError, processMenuItems, processCategories]);
 
-  const userCategories = categories.filter(cat => !cat.isPredefined);
-  const predefinedCategories = categories.filter(cat => cat.isPredefined);
+  useEffect(() => {
+    loadMenuData();
+  }, [loadMenuData]);
 
-  const filteredItems = menuItems.filter(item => {
-    const matchesCategory = selectedCategory === 'all' || 
-      (typeof item.category === 'string' ? item.category : item.category?.id) === selectedCategory;
-    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.description.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  // Memoize filtered categories
+  const { userCategories, predefinedCategories } = useMemo(() => {
+    return {
+      userCategories: categories.filter(cat => !cat.isPredefined),
+      predefinedCategories: categories.filter(cat => cat.isPredefined)
+    };
+  }, [categories]);
 
-  const handleAddItem = async (data: CreateMenuItemData, imageFile?: File) => {
+  // Memoize filtered items for better performance
+  const filteredItems = useMemo(() => {
+    return menuItems.filter(item => {
+      const matchesCategory = selectedCategory === 'all' || 
+        (typeof item.category === 'string' ? item.category : item.category?.id) === selectedCategory;
+      const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.description.toLowerCase().includes(searchTerm.toLowerCase());
+      return matchesCategory && matchesSearch;
+    });
+  }, [menuItems, selectedCategory, searchTerm]);
+
+  // Optimized item addition - no full reload
+  const handleAddItem = useCallback(async (data: CreateMenuItemData, imageFile?: File) => {
     if (!user?.restaurant?.id) {
       showError('No restaurant ID found');
       return;
@@ -90,17 +112,22 @@ const MenuManagement: React.FC = () => {
         isAvailable: true
       };
 
-      await menuService.createMenuItem(payload, imageFile);
-      await loadMenuData();
+      const response = await menuService.createMenuItem(payload, imageFile);
+      
+      // Optimistic update - add new item to state without full reload
+      const newItem = processMenuItems([response.menuItem || response.data])[0];
+      setMenuItems(prev => [...prev, newItem]);
+      
       setShowAddModal(false);
       setTempFormData(null);
       showSuccess('Menu item created successfully!');
     } catch (error: any) {
       showError(`Failed to create menu item: ${error.response?.data?.error || error.message}`);
     }
-  };
+  }, [user, showError, showSuccess, processMenuItems]);
 
-  const handleEditItem = async (id: string, data: Partial<MenuItem>, imageFile?: File) => {
+  // Optimized item editing - no full reload
+  const handleEditItem = useCallback(async (id: string, data: Partial<MenuItem>, imageFile?: File) => {
     if (!id || id === 'undefined') {
       showError('Cannot edit item: ID is missing or invalid');
       return;
@@ -112,17 +139,22 @@ const MenuManagement: React.FC = () => {
         category: typeof data.category === 'string' ? data.category : (data.category as any)?.id
       };
 
-      await menuService.updateMenuItem(id, updateData, imageFile);
-      await loadMenuData();
+      const response = await menuService.updateMenuItem(id, updateData, imageFile);
+      
+      // Optimistic update - update item in state without full reload
+      const updatedItem = processMenuItems([response.menuItem || response.data])[0];
+      setMenuItems(prev => prev.map(item => item.id === id ? updatedItem : item));
+      
       setEditingItem(null);
       setTempFormData(null);
       showSuccess('Menu item updated successfully!');
     } catch (error: any) {
       showError(`Failed to update menu item: ${error.response?.data?.error || error.message}`);
     }
-  };
+  }, [showError, showSuccess, processMenuItems]);
 
-  const handleDeleteItem = async (id: string) => {
+  // Optimized item deletion - no full reload
+  const handleDeleteItem = useCallback(async (id: string) => {
     if (!id || id === 'undefined') {
       showError('Cannot delete item: ID is missing or invalid');
       return;
@@ -132,19 +164,37 @@ const MenuManagement: React.FC = () => {
 
     try {
       await menuService.deleteMenuItem(id);
-      await loadMenuData();
+      
+      // Optimistic update - remove item from state without full reload
+      setMenuItems(prev => prev.filter(item => item.id !== id));
+      
       showSuccess('Menu item deleted successfully!');
     } catch (error: any) {
       showError(`Failed to delete menu item: ${error.response?.data?.error || error.message}`);
     }
-  };
+  }, [showError, showSuccess]);
 
-  const toggleAvailability = async (item: MenuItem) => {
+  // Optimized availability toggle
+  const toggleAvailability = useCallback(async (item: MenuItem) => {
     if (!item.id) return;
-    await handleEditItem(item.id, { isAvailable: !item.isAvailable });
-  };
+    
+    // Optimistic UI update
+    setMenuItems(prev => prev.map(i => 
+      i.id === item.id ? { ...i, isAvailable: !i.isAvailable } : i
+    ));
+    
+    try {
+      await handleEditItem(item.id, { isAvailable: !item.isAvailable });
+    } catch (error) {
+      // Revert on error
+      setMenuItems(prev => prev.map(i => 
+        i.id === item.id ? { ...i, isAvailable: item.isAvailable } : i
+      ));
+    }
+  }, [handleEditItem]);
 
-  const handleCreateCategory = async (categoryName: string) => {
+  // Optimized category creation - no full reload
+  const handleCreateCategory = useCallback(async (categoryName: string) => {
     if (!user?.restaurant?.id) {
       showError('No restaurant ID found');
       return;
@@ -160,16 +210,21 @@ const MenuManagement: React.FC = () => {
       };
 
       const response = await menuService.createCategory(newCategory);
-      await loadMenuData();
+      const createdCategory = processCategories([response.category || response.data])[0];
+      
+      // Optimistic update - add new category to state without full reload
+      setCategories(prev => [...prev, createdCategory]);
+      
       showSuccess('Category created successfully!');
-      return response.category || response.data;
+      return createdCategory;
     } catch (error: any) {
       showError(`Failed to create category: ${error.response?.data?.error || error.message}`);
       throw error;
     }
-  };
+  }, [user, categories.length, showError, showSuccess, processCategories]);
 
-  const handleDeleteCategory = async (categoryId: string) => {
+  // Optimized category deletion - no full reload
+  const handleDeleteCategory = useCallback(async (categoryId: string) => {
     if (!confirm('Are you sure you want to delete this category? Menu items in this category will become uncategorized.')) {
       return;
     }
@@ -177,7 +232,10 @@ const MenuManagement: React.FC = () => {
     try {
       setDeletingCategoryId(categoryId);
       await menuService.deleteCategory(categoryId);
-      await loadMenuData();
+      
+      // Optimistic update - remove category from state without full reload
+      setCategories(prev => prev.filter(cat => cat.id !== categoryId));
+      
       showSuccess('Category deleted successfully!');
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.message;
@@ -189,7 +247,7 @@ const MenuManagement: React.FC = () => {
     } finally {
       setDeletingCategoryId(null);
     }
-  };
+  }, [showError, showSuccess]);
 
   if (loading) {
     return (
@@ -203,136 +261,94 @@ const MenuManagement: React.FC = () => {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-2  space-y-6">
+    <div className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-2 space-y-6">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-green-600 via-green-500 to-green-600 lg:rounded-2xl rounded-b-2xl sm:rounded-3xl overflow-hidden">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-6 lg:p-8">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl sm:text-2xl lg:text-4xl font-bold text-white mb-1 sm:mb-2">
+              Menu Management
+            </h1>
+            <p className="text-blue-100 text-sm sm:text-base lg:text-lg">
+              Manage your menu items & categories
+            </p>
+          </div>
 
-  {/* Header */}
-  <div className="bg-gradient-to-r from-green-600 via-green-500 to-green-600 lg:rounded-2xl rounded-b-2xl sm:rounded-3xl overflow-hidden">
-    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-6 lg:p-8">
-      
-      {/* Title Section */}
-      <div className="flex-1 min-w-0">
-        <h1 className="text-xl sm:text-2xl lg:text-4xl font-bold text-white mb-1 sm:mb-2">
-          Menu Management
-        </h1>
-        <p className="text-blue-100 text-sm sm:text-base lg:text-lg">
-          Manage your menu items & categories
-        </p>
-      </div>
+          <div className="flex justify-end w-full lg:w-auto gap-2 sm:gap-3">
+            <button
+              onClick={() => setShowCategoryManagement(true)}
+              className="group relative w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-2xl bg-white/20 backdrop-blur-sm text-white flex items-center justify-center shadow-lg hover:bg-white/30 hover:scale-110 active:scale-95 transition-all duration-300"
+              title="Manage Categories"
+            >
+              <i className="ri-folder-open-line text-xl sm:text-2xl lg:text-3xl"></i>
+            </button>
 
-      {/* Action Buttons */}
-      <div className="flex justify-end w-full lg:w-auto gap-2 sm:gap-3">
-        <button
-          onClick={() => setShowCategoryManagement(true)}
-          className="group relative w-12 h-12 sm:w-
-          14 sm:h-14 lg:w-16 lg:h-16 rounded-2xl bg-white/20 backdrop-blur-sm text-white flex items-center justify-center shadow-lg hover:bg-white/30 hover:scale-110 active:scale-95 transition-all duration-300"
-          title="Manage Categories"
-        >
-          <i className="ri-folder-open-line text-xl sm:text-2xl lg:text-3xl"></i>
-          <span className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-xs bg-gray-900 text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-            Categories
-          </span>
-        </button>
-
-        <button
-          onClick={() => setShowAddModal(true)}
-          className="group relative w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-2xl bg-white text-blue-600 flex items-center justify-center shadow-lg hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300"
-          title="Add Menu Item"
-        >
-          <i className="ri-add-line text-2xl sm:text-3xl lg:text-4xl font-bold"></i>
-          <span className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 text-xs bg-gray-900 text-white px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-            Add Item
-          </span>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  {/* Search & Filter Section */}
- <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-lg border border-gray-100">
-  <div className="flex gap-4 items-stretch">
-    {/* Search Input */}
-    <div className="flex-1 w-full">
-      <div className="relative group">
-        <i className="ri-search-line absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 group-hover:text-blue-500 text-lg sm:text-xl transition-colors"></i>
-        <input
-          type="text"
-          placeholder="Search menu items by name or description..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-12 sm:pl-14 pr-4 py-3 sm:py-4 lg:py-5 border-2 border-gray-200 rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-sm sm:text-base lg:text-lg transition-all duration-300 hover:border-gray-300"
-        />
-      </div>
-    </div>
-
-    {/* Category Filter */}
-    <div className="w-1/3">
-      <select
-        value={selectedCategory}
-        onChange={(e) => setSelectedCategory(e.target.value)}
-        className="w-full px-4 py-3 sm:py-4 lg:py-5 border-2 border-gray-200 rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-sm sm:text-base lg:text-lg transition-all duration-300 bg-white hover:border-gray-300 cursor-pointer"
-      >
-        <option value="all">All Categories</option>
-        {categories.map(category => (
-          <option key={category.id} value={category.id}>
-            {category.name}
-          </option>
-        ))}
-      </select>
-    </div>
-  </div>
-
-  {/* Search Results Info */}
-  {(searchTerm || selectedCategory !== 'all') && (
-    <div className="mt-4 sm:mt-6 p-4 sm:p-5 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 border-2 border-blue-200 rounded-xl sm:rounded-2xl shadow-sm">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center space-x-2 text-blue-800">
-          <i className="ri-information-line text-xl sm:text-2xl"></i>
-          <span className="font-bold text-sm sm:text-base lg:text-lg">Search Results</span>
-        </div>
-        <div className="flex flex-wrap gap-2 text-xs sm:text-sm">
-          {searchTerm && (
-            <span className="bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-blue-200 text-blue-700 font-medium">
-              Search: "{searchTerm}"
-            </span>
-          )}
-          {selectedCategory !== 'all' && (
-            <span className="bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-blue-200 text-blue-700 font-medium">
-              Category: {categories.find(c => c.id === selectedCategory)?.name}
-            </span>
-          )}
-          <span className="bg-blue-500 text-white px-3 py-1.5 rounded-full font-bold shadow-md">
-            {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''} found
-          </span>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="group relative w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16 rounded-2xl bg-white text-blue-600 flex items-center justify-center shadow-lg hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300"
+              title="Add Menu Item"
+            >
+              <i className="ri-add-line text-2xl sm:text-3xl lg:text-4xl font-bold"></i>
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  )}
-</div>
 
-   {/* Stats Cards */}
-<div className="flex overflow-x-auto gap-3 p-2">
-  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
-    <div className="text-xl font-bold text-green-600 mb-1">{menuItems.length}</div>
-    <div className="text-gray-600 text-sm">Total Items</div>
-  </div>
+      {/* Search & Filter Section */}
+      <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-lg border border-gray-100">
+        <div className="flex gap-4 items-stretch">
+          <div className="flex-1 w-full">
+            <div className="relative group">
+              <i className="ri-search-line absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 group-hover:text-blue-500 text-lg sm:text-xl transition-colors"></i>
+              <input
+                type="text"
+                placeholder="Search menu items by name or description..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-12 sm:pl-14 pr-4 py-3 sm:py-4 lg:py-5 border-2 border-gray-200 rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-sm sm:text-base lg:text-lg transition-all duration-300 hover:border-gray-300"
+              />
+            </div>
+          </div>
 
-  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
-    <div className="text-xl font-bold text-blue-600 mb-1">{categories.length}</div>
-    <div className="text-gray-600 text-sm">Categories</div>
-  </div>
+          <div className="w-1/3">
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full px-4 py-3 sm:py-4 lg:py-5 border-2 border-gray-200 rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-sm sm:text-base lg:text-lg transition-all duration-300 bg-white hover:border-gray-300 cursor-pointer"
+            >
+              <option value="all">All Categories</option>
+              {categories.map(category => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
 
-  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
-    <div className="text-xl font-bold text-purple-600 mb-1">{userCategories.length}</div>
-    <div className="text-gray-600 text-sm">Custom Categories</div>
-  </div>
+      {/* Stats Cards */}
+      <div className="flex overflow-x-auto gap-3 p-2">
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+          <div className="text-xl font-bold text-green-600 mb-1">{menuItems.length}</div>
+          <div className="text-gray-600 text-sm">Total Items</div>
+        </div>
 
-  <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
-    <div className="text-xl font-bold text-orange-600 mb-1">{predefinedCategories.length}</div>
-    <div className="text-gray-600 text-sm">System Categories</div>
-  </div>
-</div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+          <div className="text-xl font-bold text-blue-600 mb-1">{categories.length}</div>
+          <div className="text-gray-600 text-sm">Categories</div>
+        </div>
 
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+          <div className="text-xl font-bold text-purple-600 mb-1">{userCategories.length}</div>
+          <div className="text-gray-600 text-sm">Custom Categories</div>
+        </div>
 
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+          <div className="text-xl font-bold text-orange-600 mb-1">{predefinedCategories.length}</div>
+          <div className="text-gray-600 text-sm">System Categories</div>
+        </div>
+      </div>
 
       {/* Menu Items Grid */}
       {filteredItems.length === 0 ? (
@@ -409,118 +425,183 @@ interface MenuItemCardProps {
   onToggleAvailability: (item: MenuItem) => void;
 }
 
-const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, onEdit, onDelete, onToggleAvailability }) => {
+const MenuItemCard: React.FC<MenuItemCardProps> = React.memo(({ item, onEdit, onDelete, onToggleAvailability }) => {
+  const [showMore, setShowMore] = React.useState(false);
   const categoryName = typeof item.category === 'string' ? 'Uncategorized' : item.category?.name || 'Uncategorized';
 
   return (
-    <div className={`bg-white rounded-2xl shadow-sm border transition-all duration-300 hover:shadow-lg ${
+    <div className={`bg-white rounded-lg shadow-sm border transition-all duration-300 hover:shadow-md overflow-hidden ${
       item.isAvailable 
-        ? 'border-transparent hover:border-green-200' 
-        : 'border-gray-200 opacity-70'
-    } group`}>
-      {/* Image */}
-      <div className="relative overflow-hidden rounded-t-2xl">
+        ? 'border-green-100 hover:border-green-200' 
+        : 'border-gray-300 opacity-60'
+    } group flex flex-col h-full`}>
+      
+      {/* Image Section */}
+      <div className="relative overflow-hidden aspect-[4/3]">
         {item.image ? (
           <img
             src={`http://localhost:5000${item.image}`}
             alt={item.name}
-            className="w-full h-48 sm:h-56 object-cover transition-transform duration-300 group-hover:scale-105"
+            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+            loading="lazy"
           />
         ) : (
-          <div className="w-full h-48 sm:h-56 bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center">
-            <i className="ri-restaurant-line text-4xl text-gray-400"></i>
+          <div className="w-full h-full bg-gradient-to-br from-green-50 to-emerald-50 flex items-center justify-center">
+            <i className="ri-restaurant-line text-4xl text-green-200"></i>
           </div>
         )}
         
-        {/* Availability Toggle */}
-        <div className="absolute top-3 right-3 z-20">
-          <button
-            onClick={() => onToggleAvailability(item)}
-            className={`p-2 rounded-full shadow-lg backdrop-blur-sm transition-all duration-200 ${
-              item.isAvailable 
-                ? 'bg-green-500 text-white hover:bg-green-600' 
-                : 'bg-gray-500 text-white hover:bg-gray-600'
-            }`}
-          >
-            <i className={`ri-${item.isAvailable ? 'eye' : 'eye-off'}-line text-sm`}></i>
-          </button>
-        </div>
+        {/* Availability Toggle - Responsive */}
+        <button
+          onClick={() => onToggleAvailability(item)}
+          className={` z-20 absolute top-3 right-3 shadow-md backdrop-blur-sm transition-all duration-200 font-medium ${
+            item.isAvailable 
+              ? 'bg-green-600 z-20 text-white hover:bg-green-700' 
+              : 'bg-gray-600 z-20 text-white hover:bg-gray-700'
+          } px-3 py-1.5 z-20 rounded-full text-sm sm:inline-flex items-center gap-1.5 hidden`}
+          title={item.isAvailable ? 'Click to mark as unavailable' : 'Click to mark as available'}
+        >
+          <i className={`ri-${item.isAvailable ? 'eye' : 'eye-off'}-line`}></i>
+          <span>{item.isAvailable ? 'Available' : 'Unavailable'}</span>
+        </button>
 
-        {/* Overlay on unavailable items */}
+        {/* Icon Only Toggle for Small Screens */}
+        <button
+          onClick={() => onToggleAvailability(item)}
+          className={`z-20 absolute top-3 right-3 shadow-md backdrop-blur-sm transition-all duration-200 ${
+            item.isAvailable 
+              ? 'bg-green-600 text-white hover:bg-green-700' 
+              : 'bg-gray-600 text-white hover:bg-gray-700'
+          } p-2 rounded-full sm:hidden`}
+          title={item.isAvailable ? 'Click to mark as unavailable' : 'Click to mark as available'}
+        >
+          <i className={`ri-${item.isAvailable ? 'eye' : 'eye-off'}-line text-base`}></i>
+        </button>
+
+        {/* Unavailable Overlay */}
         {!item.isAvailable && (
-          <div className="absolute inset-0 bg-gray-900/40 flex items-center justify-center">
-            <span className="bg-gray-800 text-white px-3 py-1 rounded-full text-sm font-semibold">
-              Unavailable
-            </span>
-          </div>
+          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-[1px]"></div>
         )}
       </div>
 
-      {/* Content */}
-      <div className="p-4 sm:p-5">
-        <div className="flex items-start justify-between mb-3">
-          <h3 className="font-bold text-gray-900 text-base sm:text-lg line-clamp-2 flex-1 pr-2">{item.name}</h3>
+      {/* Content Section */}
+      <div className="p-5 flex flex-col flex-1">
+        
+        {/* Title and Price */}
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <h3 className="font-semibold text-gray-900 text-base leading-snug flex-1">
+            {item.name}
+          </h3>
           <span className="text-lg font-bold text-green-600 whitespace-nowrap">
-            {item.price.toLocaleString()} CFA
+            {item.price.toLocaleString()} <span className="text-sm text-green-500">CFA</span>
           </span>
         </div>
 
-        <p className="text-gray-600 text-sm mb-4 line-clamp-2 leading-relaxed">{item.description}</p>
+        {/* Category */}
+        <span className="text-xs text-gray-500 mb-3">{categoryName}</span>
 
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-xs font-semibold px-2 py-1 bg-gray-100 text-gray-700 rounded-full">
-            {categoryName}
-          </span>
-          <div className="flex items-center space-x-1">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <i
-                key={i}
-                className={`ri-chili-line text-sm ${
-                  i < (item.spiceLevel || 0) ? 'text-red-500' : 'text-gray-300'
-                }`}
-              ></i>
-            ))}
+        {/* Description */}
+        <p className="text-gray-600 text-sm mb-3 line-clamp-2 leading-relaxed">
+          {item.description}
+        </p>
+
+        {/* Essential Info - Always Visible */}
+        <div className="flex items-center gap-3 text-xs text-gray-600 mb-3 flex-wrap">
+          {/* Rating */}
+          {item.rating?.average && item.rating.average > 0 ? (
+            <div className="flex items-center gap-1">
+              <i className="ri-star-fill text-green-500"></i>
+              <span className="font-medium text-gray-700">{item.rating.average.toFixed(1)}</span>
+              <span className="text-gray-400">({item.rating.count || 0})</span>
+            </div>
+          ) : (
+            <span className="text-gray-400">No ratings</span>
+          )}
+
+          {/* Spice Level */}
+          {item.spiceLevel && item.spiceLevel > 0 && (
+            <>
+              <span className="text-gray-300">•</span>
+              <div className="flex items-center gap-0.5">
+                {Array.from({ length: item.spiceLevel }).map((_, i) => (
+                  <i key={i} className="ri-fire-fill text-red-500 text-xs"></i>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Dietary Icons (Compact) */}
+          {(item.isVegetarian || item.isVegan || item.isGlutenFree) && (
+            <>
+              <span className="text-gray-300">•</span>
+              <div className="flex items-center gap-1">
+                {item.isVegan && (
+                  <i className="ri-leaf-fill text-green-600" title="Vegan"></i>
+                )}
+                {item.isVegetarian && !item.isVegan && (
+                  <i className="ri-plant-fill text-green-500" title="Vegetarian"></i>
+                )}
+                {item.isGlutenFree && (
+                  <i className="ri-shield-check-fill text-blue-500" title="Gluten Free"></i>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* More Details - Collapsible */}
+        {showMore && (
+          <div className="mb-3 pb-3 border-b border-gray-100 space-y-2 text-xs text-gray-600">
+            {item.nutrition?.calories && item.nutrition.calories > 0 && (
+              <div className="flex items-center gap-2">
+                <i className="ri-fire-line text-orange-500"></i>
+                <span>{item.nutrition.calories} Kcalories</span>
+              </div>
+            )}
+            {item.takeaway?.isTakeawayAvailable && (
+              <div className="flex items-center gap-2">
+                <i className="ri-shopping-bag-line text-green-600"></i>
+                <span>Takeaway available</span>
+              </div>
+            )}
           </div>
-        </div>
+        )}
 
-        <div className="flex flex-wrap gap-1.5 mb-4">
-          {item.isVegetarian && (
-            <span className="text-xs font-semibold px-2 py-1 bg-green-100 text-green-700 rounded-full">
-              Vegetarian
-            </span>
-          )}
-          {item.isVegan && (
-            <span className="text-xs font-semibold px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full">
-              Vegan
-            </span>
-          )}
-          {item.isGlutenFree && (
-            <span className="text-xs font-semibold px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
-              Gluten Free
-            </span>
-          )}
-        </div>
+        {/* Show More/Less Toggle */}
+        {(item.nutrition?.calories || item.takeaway?.isTakeawayAvailable) && (
+          <button
+            onClick={() => setShowMore(!showMore)}
+            className="text-xs text-green-600 hover:text-green-700 font-medium mb-3 flex items-center gap-1 transition-colors"
+          >
+            <span>{showMore ? 'Hide details' : 'View details'}</span>
+            <i className={`ri-arrow-${showMore ? 'up' : 'down'}-s-line`}></i>
+          </button>
+        )}
 
-        <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+        {/* Spacer */}
+        <div className="flex-1"></div>
+
+        {/* Action Buttons */}
+        <div className="flex items-center justify-end gap-4 pt-3 border-t border-gray-100 mt-auto">
           <button
             onClick={() => onEdit(item)}
-            className="text-blue-600 hover:text-blue-700 font-semibold text-sm flex items-center space-x-1.5 transition-colors duration-200"
+            className="text-gray-600 hover:text-green-600 text-sm font-medium transition-colors duration-200 flex items-center gap-1.5"
           >
             <i className="ri-edit-line"></i>
-            <span>Edit</span>
+            Edit
           </button>
           <button
             onClick={() => item.id && onDelete(item.id)}
-            className="text-red-600 hover:text-red-700 font-semibold text-sm flex items-center space-x-1.5 transition-colors duration-200"
+            className="text-gray-600 hover:text-red-600 text-sm font-medium transition-colors duration-200 flex items-center gap-1.5"
           >
             <i className="ri-delete-bin-line"></i>
-            <span>Delete</span>
+            Delete
           </button>
         </div>
       </div>
     </div>
   );
-};
+});
 
 // Menu Item Modal Component
 interface MenuItemModalProps {
@@ -544,17 +625,27 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
 }) => {
   const { user } = useAuth();
   const [formData, setFormData] = useState<MenuItemFormData>(tempFormData || {
-  name: item?.name || '',
-  description: item?.description || '',
-  price: item?.price || 0,
-  category: (typeof item?.category === 'string' ? item.category : item?.category?.id) || '',
-  ingredients: item?.ingredients?.join(', ') || '',
-  preparationTime: item?.preparationTime || 15,
-  isVegetarian: item?.isVegetarian || false,
-  isVegan: item?.isVegan || false,
-  isGlutenFree: item?.isGlutenFree || false,
-  spiceLevel: item?.spiceLevel || 0,
-});
+    name: item?.name || '',
+    description: item?.description || '',
+    price: item?.price || 0,
+    category: (typeof item?.category === 'string' ? item.category : item?.category?.id) || '',
+    ingredients: item?.ingredients?.join(', ') || '',
+    preparationTime: item?.preparationTime || 15,
+    isVegetarian: item?.isVegetarian || false,
+    isVegan: item?.isVegan || false,
+    isGlutenFree: item?.isGlutenFree || false,
+    spiceLevel: item?.spiceLevel || 0,
+    isTakeawayAvailable: item?.takeaway?.isTakeawayAvailable ?? true,
+    takeawayPrice: item?.takeaway?.takeawayPrice || item?.price || 0,
+    packagingFee: item?.takeaway?.packagingFee || 0,
+    calories: item?.nutrition?.calories || 0,
+    protein: item?.nutrition?.protein || 0,
+    carbs: item?.nutrition?.carbs || 0,
+    fat: item?.nutrition?.fat || 0,
+    fiber: item?.nutrition?.fiber || 0,
+    sugar: item?.nutrition?.sugar || 0,
+    sodium: item?.nutrition?.sodium || 0
+  });
   
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>(item?.image || '');
@@ -563,7 +654,6 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
   const [newCategoryName, setNewCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
 
-  // Save form data to temp storage when it changes
   useEffect(() => {
     if (onTempFormDataChange) {
       onTempFormDataChange(formData);
@@ -599,61 +689,62 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
   };
 
   const handleAddNewCategory = async () => {
-  if (!newCategoryName.trim()) return;
-  try {
-    setCreatingCategory(true);
-    const newCategory = await onCreateCategory(newCategoryName.trim());
-    if (newCategory && newCategory.id) {
-      setFormData((prev: MenuItemFormData) => ({ ...prev, category: newCategory.id }));
-      setNewCategoryName('');
-      setShowAddCategory(false);
+    if (!newCategoryName.trim()) return;
+    try {
+      setCreatingCategory(true);
+      const newCategory = await onCreateCategory(newCategoryName.trim());
+      if (newCategory && newCategory.id) {
+        setFormData((prev: MenuItemFormData) => ({ ...prev, category: newCategory.id }));
+        setNewCategoryName('');
+        setShowAddCategory(false);
+      }
+    } catch (error) {
+      // Error handling is done in the parent component
+    } finally {
+      setCreatingCategory(false);
     }
-  } catch (error) {
-    // Error handling is done in the parent component
-  } finally {
-    setCreatingCategory(false);
-  }
-};
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (uploading) return;
-  try {
-    setUploading(true);
-    const submitData = {
-      ...formData,
-      price: Number(formData.price),
-      preparationTime: Number(formData.preparationTime),
-      spiceLevel: Number(formData.spiceLevel),
-      ingredients: formData.ingredients.split(',').map((ing: string) => ing.trim()).filter((ing: string) => ing),
-    };
-
-    if (item) {
-      const updateData: UpdateMenuItemData = {
-        ...submitData,
-        category: formData.category
+    e.preventDefault();
+    if (uploading) return;
+    try {
+      setUploading(true);
+      const submitData = {
+        ...formData,
+        price: Number(formData.price),
+        preparationTime: Number(formData.preparationTime),
+        spiceLevel: Number(formData.spiceLevel),
+        ingredients: formData.ingredients.split(',').map((ing: string) => ing.trim()).filter((ing: string) => ing),
+        takeawayPrice: formData.takeawayPrice || formData.price
       };
-      onSave(updateData, imageFile || undefined);
-    } else {
-      onSave({
-        ...submitData,
-        restaurant: user?.restaurant?.id || ''
-      }, imageFile || undefined);
+
+      if (item) {
+        const updateData: UpdateMenuItemData = {
+          ...submitData,
+          category: formData.category
+        };
+        onSave(updateData, imageFile || undefined);
+      } else {
+        onSave({
+          ...submitData,
+          restaurant: user?.restaurant?.id || ''
+        }, imageFile || undefined);
+      }
+    } catch (error) {
+      // Error handling is done in the parent component
+    } finally {
+      setUploading(false);
     }
-  } catch (error) {
-    // Error handling is done in the parent component
-  } finally {
-    setUploading(false);
-  }
-};
+  };
 
   const handleChange = (field: keyof MenuItemFormData, value: any) => {
-  setFormData((prev: MenuItemFormData) => ({ ...prev, [field]: value }));
-};
+    setFormData((prev: MenuItemFormData) => ({ ...prev, [field]: value }));
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 sm:p-4 z-50">
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[95vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[95vh] overflow-y-auto">
         <div className="p-4 sm:p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
           <div className="flex items-center justify-between">
             <h2 className="text-xl sm:text-2xl font-bold text-gray-900">
@@ -677,7 +768,6 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
                 Item Image
               </label>
               <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-4 sm:space-y-0 sm:space-x-6">
-                {/* Image Preview */}
                 <div className="flex-shrink-0">
                   {imagePreview ? (
                     <div className="relative">
@@ -702,7 +792,6 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
                   )}
                 </div>
                 
-                {/* Upload Controls */}
                 <div className="flex-1 min-w-0">
                   <div className="space-y-3">
                     <input
@@ -725,12 +814,6 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
                     <p className="text-xs text-gray-500">
                       Recommended: Square image, max 5MB. JPG, PNG, or WebP.
                     </p>
-                    {imageFile && (
-                      <p className="text-sm text-green-600 font-medium">
-                        <i className="ri-check-line mr-1"></i>
-                        {imageFile.name} ({(imageFile.size / 1024 / 1024).toFixed(2)} MB)
-                      </p>
-                    )}
                   </div>
                 </div>
               </div>
@@ -913,6 +996,153 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
                 placeholder="e.g., Rice, Chicken, Vegetables, Spices"
                 disabled={uploading}
               />
+            </div>
+
+            {/* Takeaway Options */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-semibold text-gray-900 mb-3">
+                Takeaway Options
+              </label>
+              <div className="space-y-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <label className="flex items-center space-x-3 p-3 bg-white rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors duration-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.isTakeawayAvailable}
+                    onChange={(e) => handleChange('isTakeawayAvailable', e.target.checked)}
+                    className="rounded border-gray-300 text-green-500 focus:ring-green-500 w-4 h-4"
+                    disabled={uploading}
+                  />
+                  <i className="ri-takeaway-line text-orange-500 text-lg"></i>
+                  <span className="text-sm text-gray-700 font-medium">Available for Takeaway</span>
+                </label>
+
+                {formData.isTakeawayAvailable && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-900 mb-2">
+                        Takeaway Price (CFA)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="50"
+                        value={formData.takeawayPrice}
+                        onChange={(e) => handleChange('takeawayPrice', Number(e.target.value))}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-3 focus:ring-orange-500/20 focus:border-orange-500 text-sm sm:text-base transition-all duration-200"
+                        placeholder="Same as dine-in price"
+                        disabled={uploading}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Leave empty to use regular price
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-900 mb-2">
+                        Packaging Fee (CFA)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="50"
+                        value={formData.packagingFee}
+                        onChange={(e) => handleChange('packagingFee', Number(e.target.value))}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-3 focus:ring-orange-500/20 focus:border-orange-500 text-sm sm:text-base transition-all duration-200"
+                        placeholder="0"
+                        disabled={uploading}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Additional fee for takeaway packaging
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {formData.isTakeawayAvailable && (
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-semibold text-orange-800">Total Takeaway Price:</span>
+                      <span className="text-lg font-bold text-orange-600">
+                        {(formData.takeawayPrice + formData.packagingFee).toLocaleString()} CFA
+                      </span>
+                    </div>
+                    <div className="text-xs text-orange-600 mt-1">
+                      (Price: {formData.takeawayPrice.toLocaleString()} CFA + Packaging: {formData.packagingFee.toLocaleString()} CFA)
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Nutrition Information */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-semibold text-gray-900 mb-3">
+                Nutrition Information (Optional)
+              </label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-blue-50 rounded-xl border border-blue-200">
+                <div>
+                  <label className="block text-xs font-semibold text-blue-900 mb-1">
+                    KCalories
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.calories}
+                    onChange={(e) => handleChange('calories', Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm transition-all duration-200"
+                    placeholder="0"
+                    disabled={uploading}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-blue-900 mb-1">
+                    Protein (g)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={formData.protein}
+                    onChange={(e) => handleChange('protein', Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm transition-all duration-200"
+                    placeholder="0"
+                    disabled={uploading}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-blue-900 mb-1">
+                    Carbs (g)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={formData.carbs}
+                    onChange={(e) => handleChange('carbs', Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm transition-all duration-200"
+                    placeholder="0"
+                    disabled={uploading}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-blue-900 mb-1">
+                    Fat (g)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={formData.fat}
+                    onChange={(e) => handleChange('fat', Number(e.target.value))}
+                    className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm transition-all duration-200"
+                    placeholder="0"
+                    disabled={uploading}
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Dietary Options */}
