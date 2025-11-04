@@ -494,107 +494,124 @@ const handleSubmitRating = async () => {
   };
 
   // Handle customer info submission
-  const handleCustomerInfoSubmit = async () => {
-    if (!customerName.trim()) {
-      showCustomerToast('Please enter your name', 'error');
-      return;
-    }
+  // Handle customer info submission
+const handleCustomerInfoSubmit = async () => {
+  if (!customerName.trim()) {
+    showCustomerToast('Please enter your name', 'error');
+    return;
+  }
 
-    // Save customer name to localStorage for future ratings
-    localStorage.setItem('customer_name', customerName.trim());
+  // Save customer name to localStorage for future ratings
+  localStorage.setItem('customer_name', customerName.trim());
 
-    try {
-      // First, find or create the table
-      let tableId = null;
-      if (tableNumber) {
-        // Try to find existing table
-        const tablesResponse = await fetch(`http://localhost:5000/api/tables?restaurant=${restaurantId}&tableNumber=${tableNumber}`);
-        if (tablesResponse.ok) {
-          const tablesData = await tablesResponse.json();
-          if (tablesData.tables && tablesData.tables.length > 0) {
-            tableId = tablesData.tables[0]._id;
-          } else {
-            // Create new table if doesn't exist
-            const createTableResponse = await fetch('http://localhost:5000/api/tables', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                restaurant: restaurantId,
-                tableNumber: parseInt(tableNumber),
-                capacity: 4, // Default capacity
-                status: 'occupied'
-              })
-            });
-            
-            if (createTableResponse.ok) {
-              const tableData = await createTableResponse.json();
-              tableId = tableData.table._id;
-            }
+  try {
+    // First, find or create the table
+    let tableId = null;
+    if (tableNumber) {
+      // Try to find existing table
+      const tablesResponse = await fetch(`http://localhost:5000/api/tables?restaurant=${restaurantId}&tableNumber=${tableNumber}`);
+      if (tablesResponse.ok) {
+        const tablesData = await tablesResponse.json();
+        if (tablesData.tables && tablesData.tables.length > 0) {
+          tableId = tablesData.tables[0]._id;
+        } else {
+          // Create new table if doesn't exist
+          const createTableResponse = await fetch('http://localhost:5000/api/tables', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              restaurant: restaurantId,
+              tableNumber: parseInt(tableNumber),
+              capacity: 4, // Default capacity
+              status: 'occupied'
+            })
+          });
+          
+          if (createTableResponse.ok) {
+            const tableData = await createTableResponse.json();
+            tableId = tableData.table._id;
           }
         }
       }
-
-      // Create order with customer info and table
-      const orderData = {
-        restaurant: restaurantId,
-        customerName: customerName.trim(),
-        table: tableId, // Include table reference if available
-        items: Object.entries(cart).map(([itemId, cartItem]) => {
-          const item = menuItems.find(mi => mi._id === itemId);
-          const takeawayPrice = item?.takeaway?.takeawayPrice || item?.totalTakeawayPrice;
-const price = cartItem.isTakeaway && takeawayPrice ? takeawayPrice : item?.price || 0;
-          
-          return {
-            menuItem: itemId,
-            quantity: cartItem.quantity,
-            price: price,
-            specialInstructions: cartItem.isTakeaway ? "Takeaway" : ""
-          };
-        }),
-        totalAmount: Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
-          const item = menuItems.find(mi => mi._id === itemId);
-          const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
-            ? item.totalTakeawayPrice 
-            : item?.price || 0;
-          return sum + (price * cartItem.quantity);
-        }, 0),
-        orderType: 'dine-in'
-      };
-
-      console.log('📦 Sending order data:', orderData);
-
-      const response = await fetch('http://localhost:5000/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(orderData)
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.details || errorData.error || 'Failed to create order');
-      }
-
-      await response.json();
-      
-      // Show success message with order number
-      const tableInfo = tableNumber ? ` for Table ${tableNumber}` : '';
-      showCustomerToast(`Order placed successfully!${tableInfo}`, 'success');
-      
-      // Clear cart and close modals
-      setCart({});
-      setShowCustomerModal(false);
-      setShowCart(false);
-      setCustomerName('');
-      
-    } catch (error: any) {
-      console.error('❌ Order creation error:', error);
-      showCustomerToast(`Failed to place order: ${error.message}`, 'error');
     }
-  };
+
+    // Create order with customer info and table
+    const orderData = {
+      restaurant: restaurantId,
+      customerName: customerName.trim(),
+      table: tableId, // Include table reference if available
+      items: Object.entries(cart).map(([itemId, cartItem]) => {
+        const item = menuItems.find(mi => mi._id === itemId);
+        
+        // Calculate price based on takeaway status
+        let price = item?.price || 0;
+        let specialInstructions = "";
+        
+        if (cartItem.isTakeaway && item?.takeaway?.isTakeawayAvailable) {
+          // For takeaway: takeawayPrice + packagingFee PER ITEM
+          const takeawayPrice = item.takeaway.takeawayPrice || item.price;
+          const packagingFee = item.takeaway.packagingFee || 0;
+          price = takeawayPrice + packagingFee;
+          specialInstructions = "Takeaway";
+        }
+        
+        return {
+          menuItem: itemId,
+          quantity: cartItem.quantity,
+          price: price, // This is the unit price including packaging fee for takeaway
+          specialInstructions: specialInstructions
+        };
+      }),
+      totalAmount: Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
+        const item = menuItems.find(mi => mi._id === itemId);
+        let price = item?.price || 0;
+        
+        if (cartItem.isTakeaway && item?.takeaway?.isTakeawayAvailable) {
+          // For takeaway: (takeawayPrice + packagingFee) * quantity
+          const takeawayPrice = item.takeaway.takeawayPrice || item.price;
+          const packagingFee = item.takeaway.packagingFee || 0;
+          price = takeawayPrice + packagingFee;
+        }
+        
+        return sum + (price * cartItem.quantity);
+      }, 0),
+      orderType: tableNumber ? 'dine-in' : 'takeaway'
+    };
+
+    console.log('📦 Sending order data:', orderData);
+
+    const response = await fetch('http://localhost:5000/api/orders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(orderData)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.details || errorData.error || 'Failed to create order');
+    }
+
+    await response.json();
+    
+    // Show success message with order number
+    const tableInfo = tableNumber ? ` for Table ${tableNumber}` : '';
+    showCustomerToast(`Order placed successfully!${tableInfo}`, 'success');
+    
+    // Clear cart and close modals
+    setCart({});
+    setShowCustomerModal(false);
+    setShowCart(false);
+    setCustomerName('');
+    
+  } catch (error: any) {
+    console.error('❌ Order creation error:', error);
+    showCustomerToast(`Failed to place order: ${error.message}`, 'error');
+  }
+};
 
   // Close customer modal
   const handleCloseCustomerModal = () => {
@@ -1485,13 +1502,27 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
   const cartItems = Object.entries(cart)
     .map(([itemId, cartItem]) => {
       const item = menuItems.find(mi => mi._id === itemId);
-      return item ? { ...item, quantity: cartItem.quantity, isTakeaway: cartItem.isTakeaway } : null;
+      if (!item) return null;
+      
+      // Calculate display price including packaging fee for takeaway
+      let displayPrice = item.price;
+      if (cartItem.isTakeaway && item.takeaway?.isTakeawayAvailable) {
+        const takeawayPrice = item.takeaway.takeawayPrice || item.price;
+        const packagingFee = item.takeaway.packagingFee || 0;
+        displayPrice = takeawayPrice + packagingFee;
+      }
+      
+      return { 
+        ...item, 
+        quantity: cartItem.quantity, 
+        isTakeaway: cartItem.isTakeaway,
+        displayPrice: displayPrice
+      };
     })
-    .filter(Boolean) as (MenuItem & { quantity: number; isTakeaway: boolean })[];
+    .filter(Boolean) as (MenuItem & { quantity: number; isTakeaway: boolean; displayPrice: number })[];
 
   const total = cartItems.reduce((sum, item) => {
-    const price = item.isTakeaway && item.totalTakeawayPrice ? item.totalTakeawayPrice : item.price;
-    return sum + (price * item.quantity);
+    return sum + (item.displayPrice * item.quantity);
   }, 0);
 
   const updateQuantity = (itemId: string, newQuantity: number) => {

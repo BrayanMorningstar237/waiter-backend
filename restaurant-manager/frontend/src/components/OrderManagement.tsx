@@ -893,13 +893,13 @@ const OrderCard = memo(({
                 </p>
                 {item.specialInstructions && (
                   <p className="text-xs text-blue-600 italic mt-0.5 line-clamp-1">
-                    📝 {item.specialInstructions}
+                    <i className="ri-takeaway-line"></i> {item.specialInstructions}
                   </p>
                 )}
               </div>
               <div className="text-right">
                 <p className="text-sm font-bold text-gray-900">
-                  {(item.quantity * item.price).toLocaleString()}
+                  {(item.quantity * (item.price)).toLocaleString()}
                 </p>
                 <p className="text-xs text-gray-500">CFA</p>
               </div>

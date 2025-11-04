@@ -5,7 +5,7 @@ import type { MenuItem, Category, CreateMenuItemData, UpdateMenuItemData, MenuIt
 import { useToast } from '../contexts/ToastContext';
 
 const MenuManagement: React.FC = () => {
-  const { user } = useAuth();
+  const { user, restaurant  } = useAuth();
   const { showSuccess, showError } = useToast();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -19,23 +19,23 @@ const MenuManagement: React.FC = () => {
   const [tempFormData, setTempFormData] = useState<any>(null);
 
   // Memoize data processing
-  const processMenuItems = useCallback((rawMenuItems: any[]) => {
-    return rawMenuItems.map((item: any) => ({
-      ...item,
-      id: item.id || item._id,
-      category: item.category?._id ? {
-        id: item.category._id,
-        name: item.category.name
-      } : item.category
-    }));
-  }, []);
+const processMenuItems = useCallback((rawMenuItems: any[]) => {
+  return rawMenuItems.map((item: any) => ({
+    ...item,
+    id: item.id || item._id, // Handle both id and _id
+    category: item.category?._id ? {
+      id: item.category._id,
+      name: item.category.name
+    } : item.category
+  }));
+}, []);
 
   const processCategories = useCallback((rawCategories: any[]) => {
-    return rawCategories.map((category: any) => ({
-      ...category,
-      id: category.id || category._id
-    }));
-  }, []);
+  return rawCategories.map((category: any) => ({
+    ...category,
+    id: category.id || category._id // Handle both id and _id
+  }));
+}, []);
 
   // Optimized data loading with parallel requests and minimal processing
   const loadMenuData = useCallback(async () => {
@@ -100,31 +100,40 @@ const MenuManagement: React.FC = () => {
 
   // Optimized item addition - no full reload
   const handleAddItem = useCallback(async (data: CreateMenuItemData, imageFile?: File) => {
-    if (!user?.restaurant?.id) {
-      showError('No restaurant ID found');
-      return;
-    }
+  console.log('🔍 Debug - Restaurant object:', restaurant);
+  
+  // Use restaurant._id (MongoDB) or restaurant.id
+  const restaurantId = restaurant?._id || restaurant?.id;
+  
+  if (!restaurantId) {
+    showError('No restaurant ID found. Please make sure your restaurant profile is properly set up.');
+    console.error('Restaurant ID not found. Restaurant object:', restaurant);
+    return;
+  }
 
-    try {
-      const payload: CreateMenuItemData = {
-        ...data,
-        restaurant: user.restaurant.id,
-        isAvailable: true
-      };
+  try {
+    const payload: CreateMenuItemData = {
+      ...data,
+      restaurant: restaurantId, // Use the correct ID
+      isAvailable: true
+    };
 
-      const response = await menuService.createMenuItem(payload, imageFile);
-      
-      // Optimistic update - add new item to state without full reload
-      const newItem = processMenuItems([response.menuItem || response.data])[0];
-      setMenuItems(prev => [...prev, newItem]);
-      
-      setShowAddModal(false);
-      setTempFormData(null);
-      showSuccess('Menu item created successfully!');
-    } catch (error: any) {
-      showError(`Failed to create menu item: ${error.response?.data?.error || error.message}`);
-    }
-  }, [user, showError, showSuccess, processMenuItems]);
+    console.log('📦 Payload being sent with restaurant ID:', restaurantId);
+
+    const response = await menuService.createMenuItem(payload, imageFile);
+    
+    // Optimistic update
+    const newItem = processMenuItems([response.menuItem || response.data])[0];
+    setMenuItems(prev => [...prev, newItem]);
+    
+    setShowAddModal(false);
+    setTempFormData(null);
+    showSuccess('Menu item created successfully!');
+  } catch (error: any) {
+    console.error('❌ Create menu item error:', error);
+    showError(`Failed to create menu item: ${error.response?.data?.error || error.message}`);
+  }
+}, [restaurant, showError, showSuccess, processMenuItems]);
 
   // Optimized item editing - no full reload
   const handleEditItem = useCallback(async (id: string, data: Partial<MenuItem>, imageFile?: File) => {
@@ -194,36 +203,37 @@ const MenuManagement: React.FC = () => {
   }, [handleEditItem]);
 
   // Optimized category creation - no full reload
-  const handleCreateCategory = useCallback(async (categoryName: string) => {
-    if (!user?.restaurant?.id) {
-      showError('No restaurant ID found');
-      return;
-    }
+const handleCreateCategory = useCallback(async (categoryName: string) => {
+  const restaurantId = restaurant?._id || restaurant?.id;
+  
+  if (!restaurantId) {
+    showError('No restaurant ID found for category creation.');
+    return;
+  }
 
-    try {
-      const newCategory = {
-        name: categoryName,
-        description: categoryName,
-        restaurant: user.restaurant.id,
-        sortOrder: categories.length + 1,
-        isPredefined: false
-      };
+  try {
+    const newCategory = {
+      name: categoryName,
+      description: categoryName,
+      restaurant: restaurantId, // Use the correct ID
+      sortOrder: categories.length + 1,
+      isPredefined: false
+    };
 
-      const response = await menuService.createCategory(newCategory);
-      const createdCategory = processCategories([response.category || response.data])[0];
-      
-      // Optimistic update - add new category to state without full reload
-      setCategories(prev => [...prev, createdCategory]);
-      
-      showSuccess('Category created successfully!');
-      return createdCategory;
-    } catch (error: any) {
-      showError(`Failed to create category: ${error.response?.data?.error || error.message}`);
-      throw error;
-    }
-  }, [user, categories.length, showError, showSuccess, processCategories]);
-
-  // Optimized category deletion - no full reload
+    const response = await menuService.createCategory(newCategory);
+    const createdCategory = processCategories([response.category || response.data])[0];
+    
+    // Optimistic update
+    setCategories(prev => [...prev, createdCategory]);
+    
+    showSuccess('Category created successfully!');
+    return createdCategory;
+  } catch (error: any) {
+    showError(`Failed to create category: ${error.response?.data?.error || error.message}`);
+    throw error;
+  }
+}, [restaurant, categories.length, showError, showSuccess, processCategories]);
+ // Optimized category deletion - no full reload
   const handleDeleteCategory = useCallback(async (categoryId: string) => {
     if (!confirm('Are you sure you want to delete this category? Menu items in this category will become uncategorized.')) {
       return;
@@ -510,7 +520,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = React.memo(({ item, onEdit, on
           {/* Rating */}
           {item.rating?.average && item.rating.average > 0 ? (
             <div className="flex items-center gap-1">
-              <i className="ri-star-fill text-green-500"></i>
+              <i className="ri-star-fill text-yellow-500"></i>
               <span className="font-medium text-gray-700">{item.rating.average.toFixed(1)}</span>
               <span className="text-gray-400">({item.rating.count || 0})</span>
             </div>
@@ -623,7 +633,7 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
   tempFormData,
   onTempFormDataChange
 }) => {
-  const { user } = useAuth();
+  const { restaurant } = useAuth();
   const [formData, setFormData] = useState<MenuItemFormData>(tempFormData || {
     name: item?.name || '',
     description: item?.description || '',
@@ -706,37 +716,39 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (uploading) return;
-    try {
-      setUploading(true);
-      const submitData = {
-        ...formData,
-        price: Number(formData.price),
-        preparationTime: Number(formData.preparationTime),
-        spiceLevel: Number(formData.spiceLevel),
-        ingredients: formData.ingredients.split(',').map((ing: string) => ing.trim()).filter((ing: string) => ing),
-        takeawayPrice: formData.takeawayPrice || formData.price
-      };
+  e.preventDefault();
+  if (uploading) return;
+  try {
+    setUploading(true);
+    const submitData = {
+      ...formData,
+      price: Number(formData.price),
+      preparationTime: Number(formData.preparationTime),
+      spiceLevel: Number(formData.spiceLevel),
+      ingredients: formData.ingredients.split(',').map((ing: string) => ing.trim()).filter((ing: string) => ing),
+      takeawayPrice: formData.takeawayPrice || formData.price
+    };
 
-      if (item) {
-        const updateData: UpdateMenuItemData = {
-          ...submitData,
-          category: formData.category
-        };
-        onSave(updateData, imageFile || undefined);
-      } else {
-        onSave({
-          ...submitData,
-          restaurant: user?.restaurant?.id || ''
-        }, imageFile || undefined);
-      }
-    } catch (error) {
-      // Error handling is done in the parent component
-    } finally {
-      setUploading(false);
+    if (item) {
+      const updateData: UpdateMenuItemData = {
+        ...submitData,
+        category: formData.category
+      };
+      onSave(updateData, imageFile || undefined);
+    } else {
+      // Use restaurant._id or restaurant.id
+      const restaurantId = restaurant?._id || restaurant?.id;
+      onSave({
+        ...submitData,
+        restaurant: restaurantId || ''
+      }, imageFile || undefined);
     }
-  };
+  } catch (error) {
+    // Error handling is done in the parent component
+  } finally {
+    setUploading(false);
+  }
+};
 
   const handleChange = (field: keyof MenuItemFormData, value: any) => {
     setFormData((prev: MenuItemFormData) => ({ ...prev, [field]: value }));
