@@ -1852,6 +1852,7 @@ app.get('/api/public/restaurants/:id', async (req, res) => {
 });
 
 // Get restaurant menu items (public) - UPDATED with new fields
+// Get restaurant menu items (public) - UPDATED with virtual fields
 app.get('/api/public/restaurants/:id/menu', async (req, res) => {
   try {
     const restaurantId = req.params.id;
@@ -1870,14 +1871,40 @@ app.get('/api/public/restaurants/:id/menu', async (req, res) => {
       isAvailable: true 
     })
     .populate('category', 'name _id')
-    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway totalTakeawayPrice popularity viewCount')
+    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway popularity viewCount')
     .sort('category name');
 
     console.log(`✅ Found ${menuItems.length} available menu items`);
     
+    // Convert to objects to include virtual fields and add calculated fields
+    const menuItemsWithVirtuals = menuItems.map(item => {
+      const itemObj = item.toObject({ virtuals: true });
+      
+      // Ensure takeaway structure exists and add calculated fields
+      if (!itemObj.takeaway) {
+        itemObj.takeaway = {
+          isTakeawayAvailable: false,
+          takeawayPrice: itemObj.price,
+          packagingFee: 0,
+          takeawayOrdersCount: 0
+        };
+      }
+      
+      // Calculate total takeaway price (item price + packaging fee)
+      // This ensures frontend always has the correct total
+      itemObj.totalTakeawayPrice = itemObj.takeaway.takeawayPrice + itemObj.takeaway.packagingFee;
+      
+      // Add a convenience field for frontend
+      itemObj.isTakeawayAvailable = itemObj.takeaway.isTakeawayAvailable;
+      
+      console.log(`🍱 ${itemObj.name}: Regular $${itemObj.price}, Takeaway $${itemObj.totalTakeawayPrice} (Available: ${itemObj.isTakeawayAvailable})`);
+      
+      return itemObj;
+    });
+
     res.json({
       message: 'Menu items retrieved successfully',
-      menuItems,
+      menuItems: menuItemsWithVirtuals,
       restaurant: {
         name: restaurant.name,
         id: restaurant._id

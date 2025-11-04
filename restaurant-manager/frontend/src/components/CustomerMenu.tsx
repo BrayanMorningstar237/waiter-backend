@@ -26,8 +26,14 @@ interface MenuItem {
   nutrition?: {
     calories: number;
   };
-  takeaway?: boolean;
+  takeaway?: {
+    isTakeawayAvailable: boolean;
+    packagingFee: number;
+    takeawayPrice: number;
+    takeawayOrdersCount: number;
+  };
   totalTakeawayPrice?: number;
+  isTakeawayAvailable?: boolean; // For backward compatibility
 }
 
 interface Restaurant {
@@ -90,10 +96,11 @@ const CustomerMenu: React.FC = () => {
   const [takeawayItemId, setTakeawayItemId] = useState<string | null>(null);
   
   // Restaurant rating state
-  // Restaurant rating state
+
 const [restaurantUserRating, setRestaurantUserRating] = useState(0);
  const [showRestaurantRatingModal, setShowRestaurantRatingModal] = useState(false);
-  // Item refs for scrolling
+  
+ // Item refs for scrolling
   const itemRefs = useRef<{[key: string]: HTMLDivElement | null}>({});
   
   // Customer info modal state - only name now
@@ -284,42 +291,44 @@ const loadRestaurantRating = async () => {
 const averageRestaurantRating = getRestaurantRating();
 
   const addToCart = (itemId: string, isTakeaway: boolean = false) => {
-    const item = menuItems.find(mi => mi._id === itemId);
-    
-    // Check if item supports takeaway
-    if (isTakeaway && !item?.takeaway) {
-      showCustomerToast('This item is not available for takeaway', 'warning');
-      return;
-    }
+  const item = menuItems.find(mi => mi._id === itemId);
+  
+  // Check if item supports takeaway using the correct property
+  const isTakeawayAvailable = item?.takeaway?.isTakeawayAvailable || item?.isTakeawayAvailable;
+  
+  if (isTakeaway && !isTakeawayAvailable) {
+    showCustomerToast('This item is not available for takeaway', 'warning');
+    return;
+  }
 
-    setCart(prev => {
-      const existing = prev[itemId];
-      if (existing) {
-        return {
-          ...prev,
-          [itemId]: { quantity: existing.quantity + 1, isTakeaway: existing.isTakeaway }
-        };
-      } else {
-        // If item supports takeaway, ask user
-        if (item?.takeaway && !isTakeaway) {
-          setTakeawayItemId(itemId);
-          setShowTakeawayModal(true);
-          return prev; // Don't add yet, wait for user choice
+  setCart(prev => {
+    const existing = prev[itemId];
+    if (existing) {
+      return {
+        ...prev,
+        [itemId]: { 
+          quantity: existing.quantity + 1, 
+          isTakeaway: existing.isTakeaway 
         }
-        return {
-          ...prev,
-          [itemId]: { quantity: 1, isTakeaway }
-        };
+      };
+    } else {
+      // If item supports takeaway, ask user for preference
+      if (isTakeawayAvailable && !isTakeaway) {
+        setTakeawayItemId(itemId);
+        setShowTakeawayModal(true);
+        return prev; // Don't add yet, wait for user choice
       }
-    });
-    
-    // Use custom toast for success messages
-    showCustomerToast('Item added to cart!', 'success');
-    
-    // Trigger cart animation every time an item is added
-    setCartAnimation(true);
-    setTimeout(() => setCartAnimation(false), 600);
-  };
+      return {
+        ...prev,
+        [itemId]: { quantity: 1, isTakeaway }
+      };
+    }
+  });
+  
+  showCustomerToast('Item added to cart!', 'success');
+  setCartAnimation(true);
+  setTimeout(() => setCartAnimation(false), 600);
+};
 
   const removeFromCart = (itemId: string) => {
     setCart(prev => {
@@ -534,9 +543,8 @@ const handleSubmitRating = async () => {
         table: tableId, // Include table reference if available
         items: Object.entries(cart).map(([itemId, cartItem]) => {
           const item = menuItems.find(mi => mi._id === itemId);
-          const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
-            ? item.totalTakeawayPrice 
-            : item?.price || 0;
+          const takeawayPrice = item?.takeaway?.takeawayPrice || item?.totalTakeawayPrice;
+const price = cartItem.isTakeaway && takeawayPrice ? takeawayPrice : item?.price || 0;
           
           return {
             menuItem: itemId,
@@ -1309,7 +1317,21 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
   onRate,
   isTakeaway,
 }) => {
-  const displayPrice = isTakeaway && item.totalTakeawayPrice ? item.totalTakeawayPrice : item.price;
+  // Get takeaway availability from the correct property
+  const isTakeawayAvailable = item.takeaway?.isTakeawayAvailable || item.isTakeawayAvailable;
+  const takeawayPrice = item.takeaway?.takeawayPrice || item.totalTakeawayPrice;
+  const displayPrice = isTakeaway && takeawayPrice ? takeawayPrice : item.price;
+  
+  // Function to handle add to cart with takeaway check
+  const handleAddToCart = () => {
+    // If item supports takeaway and it's the first time adding, show modal for choice
+    if (isTakeawayAvailable && quantity === 0) {
+      onAddToCart(); // This will trigger the takeaway modal
+    } else {
+      // For existing items or non-takeaway items, add directly
+      onAddToCart();
+    }
+  };
   
   return (
     <div className="bg-white rounded-2xl sm:rounded-3xl p-3 sm:p-5 shadow-sm border border-gray-100 hover:shadow-lg transition-all duration-300 group">
@@ -1361,7 +1383,8 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
               Vegan
             </span>
           )}
-          {isTakeaway && (
+          {/* Show takeaway badge if item supports takeaway */}
+          {isTakeawayAvailable && (
             <span className="bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-sm">
               Takeaway
             </span>
@@ -1373,6 +1396,13 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
         <div>
           <h3 className="font-bold text-gray-900 text-base sm:text-lg mb-1 line-clamp-1">{item.name}</h3>
           <p className="text-gray-500 text-xs sm:text-sm leading-relaxed line-clamp-2">{item.description}</p>
+          
+          {/* Show takeaway price info if available */}
+          {isTakeawayAvailable && takeawayPrice && takeawayPrice !== item.price && (
+            <div className="mt-1 text-xs text-blue-600 font-medium">
+              Takeaway: {takeawayPrice.toLocaleString()} CFA
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between text-xs sm:text-sm text-gray-500">
@@ -1392,7 +1422,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
               {displayPrice.toLocaleString()}
             </span>
             <span className="text-xs sm:text-sm font-medium text-gray-500 ml-1">CFA</span>
-            {isTakeaway && item.totalTakeawayPrice && item.totalTakeawayPrice !== item.price && (
+            {isTakeaway && takeawayPrice && takeawayPrice !== item.price && (
               <div className="text-xs text-gray-400 line-through">
                 {item.price.toLocaleString()} CFA
               </div>
@@ -1401,7 +1431,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
           
           {quantity === 0 ? (
             <button
-              onClick={onAddToCart}
+              onClick={handleAddToCart}
               className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-white shadow-md hover:shadow-lg hover:scale-105 transition-all"
               style={{ backgroundColor: primaryColor }}
             >
@@ -1419,7 +1449,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
                 {quantity}
               </span>
               <button
-                onClick={onAddToCart}
+                onClick={handleAddToCart}
                 className="w-7 h-7 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-white shadow-sm hover:shadow-md transition-all"
                 style={{ backgroundColor: primaryColor }}
               >
@@ -1918,9 +1948,10 @@ const TakeawayModal: React.FC<TakeawayModalProps> = ({
     }
   };
 
-  const priceDifference = item.totalTakeawayPrice && item.totalTakeawayPrice !== item.price
-    ? item.totalTakeawayPrice - item.price
-    : 0;
+  const takeawayPrice = item.takeaway?.takeawayPrice || item.totalTakeawayPrice;
+const priceDifference = takeawayPrice && takeawayPrice !== item.price
+  ? takeawayPrice - item.price
+  : 0;
 
   return (
     <div 
