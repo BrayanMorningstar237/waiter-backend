@@ -42,7 +42,32 @@ const restaurantSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
-  }
+  },
+  rating: {
+    average: {
+      type: Number,
+      min: 0,
+      max: 5,
+      default: 0
+    },
+    count: {
+      type: Number,
+      default: 0
+    },
+    distribution: {
+      1: { type: Number, default: 0 },
+      2: { type: Number, default: 0 },
+      3: { type: Number, default: 0 },
+      4: { type: Number, default: 0 },
+      5: { type: Number, default: 0 }
+    }
+  },
+  userRatings: [{
+    sessionId: String,
+    rating: Number,
+    createdAt: Date,
+    updatedAt: Date
+  }]
 }, {
   timestamps: true
 });

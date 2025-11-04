@@ -48,6 +48,10 @@ interface Restaurant {
     primaryColor: string;
     secondaryColor: string;
   };
+  rating?: {
+    average: number;
+    count: number;
+  };
 }
 
 interface Category {
@@ -85,13 +89,32 @@ const CustomerMenu: React.FC = () => {
   const [showTakeawayModal, setShowTakeawayModal] = useState(false);
   const [takeawayItemId, setTakeawayItemId] = useState<string | null>(null);
   
+  // Restaurant rating state
+  // Restaurant rating state
+const [restaurantUserRating, setRestaurantUserRating] = useState(0);
+ const [showRestaurantRatingModal, setShowRestaurantRatingModal] = useState(false);
   // Item refs for scrolling
   const itemRefs = useRef<{[key: string]: HTMLDivElement | null}>({});
   
   // Customer info modal state - only name now
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [customerName, setCustomerName] = useState('');
-  
+  // Load restaurant rating on component mount
+const loadRestaurantRating = async () => {
+  try {
+    const customerId = getCustomerId();
+    const response = await fetch(
+      `http://localhost:5000/api/public/restaurants/${restaurantId}/user-rating?sessionId=${customerId}`
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      setRestaurantUserRating(data.userRating || 0);
+    }
+  } catch (error) {
+    console.error('Failed to load restaurant rating:', error);
+  }
+};
   // Custom toast state for CustomerMenu
   const [customerToast, setCustomerToast] = useState<{
     message: string;
@@ -161,8 +184,10 @@ const CustomerMenu: React.FC = () => {
   useEffect(() => {
     if (restaurantId) {
       loadRestaurantData();
+      loadRestaurantRating();
     }
   }, [restaurantId]);
+
 
   // Handle URL parameters for category and item highlighting
   useEffect(() => {
@@ -188,7 +213,29 @@ const CustomerMenu: React.FC = () => {
       }
     }
   }, [loading, menuItems, urlCategory, urlItemId, categories]);
-
+[{
+	"resource": "/c:/Users/ndzod/OneDrive/Desktop/Project waiter 2/waiter/restaurant-manager/frontend/src/components/CustomerMenu.tsx",
+	"owner": "typescript",
+	"code": "2552",
+	"severity": 8,
+	"message": "Cannot find name 'setShowRestaurantRatingModal'. Did you mean 'RestaurantRatingModal'?",
+	"source": "ts",
+	"startLineNumber": 1789,
+	"startColumn": 5,
+	"endLineNumber": 1789,
+	"endColumn": 33,
+	"relatedInformation": [
+		{
+			"startLineNumber": 1006,
+			"startColumn": 7,
+			"endLineNumber": 1006,
+			"endColumn": 28,
+			"message": "'RestaurantRatingModal' is declared here.",
+			"resource": "/c:/Users/ndzod/OneDrive/Desktop/Project waiter 2/waiter/restaurant-manager/frontend/src/components/CustomerMenu.tsx"
+		}
+	],
+	"origin": "extHost1"
+}]
   const loadRestaurantData = async () => {
     try {
       setLoading(true);
@@ -217,6 +264,10 @@ const CustomerMenu: React.FC = () => {
     }
   };
 
+ 
+
+  
+
   const filteredItems = menuItems.filter(item => {
     const matchesCategory = selectedCategory === 'all' || item.category._id === selectedCategory;
     const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -225,16 +276,12 @@ const CustomerMenu: React.FC = () => {
     return matchesCategory && matchesSearch;
   });
 
-  // Calculate average rating of all menu items
-  const calculateAverageRating = () => {
-    const itemsWithRatings = menuItems.filter(item => item.rating && item.rating.count > 0);
-    if (itemsWithRatings.length === 0) return 0;
-    
-    const totalRating = itemsWithRatings.reduce((sum, item) => sum + (item.rating?.average || 0), 0);
-    return totalRating / itemsWithRatings.length;
-  };
+  // Get restaurant rating from actual restaurant data instead of menu items
+ const getRestaurantRating = () => {
+  return restaurant?.rating?.average || 0;
+};
 
-  const averageRestaurantRating = calculateAverageRating();
+const averageRestaurantRating = getRestaurantRating();
 
   const addToCart = (itemId: string, isTakeaway: boolean = false) => {
     const item = menuItems.find(mi => mi._id === itemId);
@@ -294,16 +341,7 @@ const CustomerMenu: React.FC = () => {
     return cart[itemId]?.quantity || 0;
   };
 
-  const getItemPrice = (itemId: string) => {
-    const item = menuItems.find(mi => mi._id === itemId);
-    if (!item) return 0;
-    
-    const cartItem = cart[itemId];
-    if (cartItem?.isTakeaway && item.totalTakeawayPrice) {
-      return item.totalTakeawayPrice;
-    }
-    return item.price;
-  };
+  
 
   const handleCloseCart = () => {
     setIsClosing(true);
@@ -319,41 +357,51 @@ const CustomerMenu: React.FC = () => {
     }
   };
 
-  // Handle like/unlike
-  const handleLike = async (itemId: string, isLiked: boolean) => {
-    try {
-      const endpoint = isLiked ? 'unlike' : 'like';
-      const response = await fetch(`http://localhost:5000/api/public/menu-items/${itemId}/${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
+  // Handle like/unlike - Single endpoint version
+const handleLike = async (itemId: string, isLiked: boolean) => {
+  try {
+    const customerId = getCustomerId();
+    const action = isLiked ? 'unlike' : 'like';
+    
+    const response = await fetch(`http://localhost:5000/api/public/menu-items/${itemId}/like`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionId: customerId,
+        action: action
+      })
+    });
 
-      if (!response.ok) throw new Error(`Failed to ${endpoint} item`);
-
-      const data = await response.json();
-      
-      // Update local state
-      const newLikedItems = new Set(likedItems);
-      if (isLiked) {
-        newLikedItems.delete(itemId);
-      } else {
-        newLikedItems.add(itemId);
-      }
-      setLikedItems(newLikedItems);
-      saveLikedItems(newLikedItems);
-
-      // Update menu items with new like count
-      setMenuItems(prev => prev.map(item => 
-        item._id === itemId ? { ...item, likes: data.menuItem.likes } : item
-      ));
-
-      showCustomerToast(isLiked ? 'Removed from favorites' : 'Added to favorites!', 'success');
-    } catch (error: any) {
-      showCustomerToast(`Failed to update: ${error.message}`, 'error');
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Failed to ${action} item`);
     }
-  };
+
+    const data = await response.json();
+    
+    // Update local state
+    const newLikedItems = new Set(likedItems);
+    if (isLiked) {
+      newLikedItems.delete(itemId);
+    } else {
+      newLikedItems.add(itemId);
+    }
+    setLikedItems(newLikedItems);
+    saveLikedItems(newLikedItems);
+
+    // Update menu items with new like count
+    setMenuItems(prev => prev.map(item => 
+      item._id === itemId ? { ...item, likes: data.menuItem.likes } : item
+    ));
+
+    showCustomerToast(isLiked ? 'Removed from favorites' : 'Added to favorites!', 'success');
+  } catch (error: any) {
+    console.error('Like error:', error);
+    showCustomerToast(`Failed to update: ${error.message}`, 'error');
+  }
+};
 
   // Handle rating click
   const handleRatingClick = (itemId: string) => {
@@ -363,41 +411,52 @@ const CustomerMenu: React.FC = () => {
   };
 
   // Submit rating
-  const handleSubmitRating = async () => {
-    if (!ratingItemId || userRating === 0) return;
+// Submit rating
+const handleSubmitRating = async () => {
+  if (!ratingItemId || userRating === 0) return;
 
-    try {
-      const customerId = getCustomerId();
-      const customerNameFromStorage = localStorage.getItem('customer_name') || customerName || 'Anonymous';
+  try {
+    const customerId = getCustomerId();
 
-      const response = await fetch(`http://localhost:5000/api/public/menu-items/${ratingItemId}/rate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          rating: userRating,
-          customerName: customerNameFromStorage
-        })
-      });
+    const response = await fetch(`http://localhost:5000/api/public/menu-items/${ratingItemId}/rate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        rating: userRating,
+        sessionId: customerId,
+        action: 'set'
+      })
+    });
 
-      if (!response.ok) throw new Error('Failed to submit rating');
-
-      const data = await response.json();
-      
-      // Update menu items with new rating
-      setMenuItems(prev => prev.map(item => 
-        item._id === ratingItemId ? { ...item, rating: data.menuItem.rating } : item
-      ));
-
-      showCustomerToast('Rating submitted successfully!', 'success');
-      setShowRatingModal(false);
-      setRatingItemId(null);
-      setUserRating(0);
-    } catch (error: any) {
-      showCustomerToast(`Failed to submit rating: ${error.message}`, 'error');
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.details || errorData.error || 'Failed to submit rating');
     }
-  };
+
+    const data = await response.json();
+    
+    // Update menu items with new rating
+    setMenuItems(prev => prev.map(item => 
+      item._id === ratingItemId ? { 
+        ...item, 
+        rating: {
+          average: data.menuItem.averageRating,
+          count: data.menuItem.ratingCount
+        }
+      } : item
+    ));
+
+    showCustomerToast('Rating submitted successfully!', 'success');
+    setShowRatingModal(false);
+    setRatingItemId(null);
+    setUserRating(0);
+  } catch (error: any) {
+    console.error('❌ Rating submission error:', error);
+    showCustomerToast(`Failed to submit rating: ${error.message}`, 'error');
+  }
+};
 
   // Handle takeaway choice
   const handleTakeawayChoice = (isTakeaway: boolean) => {
@@ -511,7 +570,7 @@ const CustomerMenu: React.FC = () => {
         throw new Error(errorData.details || errorData.error || 'Failed to create order');
       }
 
-      const result = await response.json();
+      await response.json();
       
       // Show success message with order number
       const tableInfo = tableNumber ? ` for Table ${tableNumber}` : '';
@@ -686,29 +745,48 @@ const CustomerMenu: React.FC = () => {
                       </div>
                     )}
                     
-                    {/* Rating - Inline on mobile, separate on desktop */}
-                    <div className="flex sm:hidden items-center gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-3 py-1 shadow-sm">
-                      <i className="ri-star-fill text-amber-500 text-sm"></i>
-                      <span className="text-amber-900 font-bold text-sm">
-                        {averageRestaurantRating > 0 ? averageRestaurantRating.toFixed(1) : 'N/A'}
-                      </span>
-                    </div>
+                    {/* Rating - Inline on mobile - Compact */}
+<div className="flex sm:hidden items-center gap-2 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-3 py-1 shadow-sm cursor-pointer hover:bg-amber-100 transition-colors" 
+     onClick={() => setShowRestaurantRatingModal(true)}>
+  <i className="ri-star-fill text-amber-500 text-sm"></i>
+  <span className="text-amber-900 font-bold text-sm">
+    {averageRestaurantRating > 0 ? averageRestaurantRating.toFixed(1) : 'Rate'}
+  </span>
+  {restaurantUserRating > 0 && (
+    <span className="text-amber-700 text-xs">Your: {restaurantUserRating}★</span>
+  )}
+  {averageRestaurantRating === 0 && restaurantUserRating === 0 && (
+    <span className="text-amber-600 text-xs">Click</span>
+  )}
+</div>
                   </div>
                 </div>
               </div>
 
-              {/* Right Section: Rating - Desktop Only */}
-              <div className="hidden sm:flex items-center gap-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-4 py-2 shadow-sm hover:shadow transition-shadow flex-shrink-0">
-                <i className="ri-star-fill text-amber-500 text-lg"></i>
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-amber-900 font-bold text-lg">
-                    {averageRestaurantRating > 0 ? averageRestaurantRating.toFixed(1) : 'N/A'}
-                  </span>
-                  <span className="text-amber-600 text-xs font-medium">
-                    {averageRestaurantRating >= 4.5 ? 'Excellent' : averageRestaurantRating >= 3.5 ? 'Good' : averageRestaurantRating > 0 ? 'Fair' : 'No ratings'}
-                  </span>
-                </div>
-              </div>
+              {/* Right Section: Rating - Desktop Only - Compact Horizontal */}
+<div className="hidden sm:flex items-center gap-3 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-full px-4 py-2 shadow-sm hover:shadow transition-shadow flex-shrink-0 cursor-pointer hover:bg-amber-100"
+     onClick={() => setShowRestaurantRatingModal(true)}>
+  <i className="ri-star-fill text-amber-500 text-lg"></i>
+  <div className="flex items-center gap-2">
+    <span className="text-amber-900 font-bold text-lg">
+      {averageRestaurantRating > 0 ? averageRestaurantRating.toFixed(1) : 'Rate Us'}
+    </span>
+    {averageRestaurantRating > 0 && (
+      <span className="text-amber-600 text-xs font-medium border-l border-amber-200 pl-2">
+        {averageRestaurantRating >= 4.5 ? 'Excellent' : 
+         averageRestaurantRating >= 3.5 ? 'Good' : 'Fair'}
+      </span>
+    )}
+    {restaurantUserRating > 0 && (
+      <span className="text-amber-700 text-xs font-medium border-l border-amber-200 pl-2">
+        Your: {restaurantUserRating} ★
+      </span>
+    )}
+    {averageRestaurantRating === 0 && restaurantUserRating === 0 && (
+      <span className="text-amber-600 text-xs">Click to rate</span>
+    )}
+  </div>
+</div>
             </div>
           </div>
         </div>
@@ -970,6 +1048,14 @@ const CustomerMenu: React.FC = () => {
         />
       )}
 
+      {/* Restaurant Rating Modal */}
+{showRestaurantRatingModal && (
+  <RestaurantRatingModal 
+    onClose={() => setShowRestaurantRatingModal(false)}
+    userRating={restaurantUserRating}
+    onRatingUpdate={(newRating) => setRestaurantUserRating(newRating)}
+  />
+)}
       {/* Takeaway Modal */}
       {showTakeawayModal && (
         <TakeawayModal
@@ -986,6 +1072,219 @@ const CustomerMenu: React.FC = () => {
     </div>
   );
 };
+
+// Restaurant Rating Modal Component
+interface RestaurantRatingModalProps {
+  onClose: () => void;
+  userRating: number;
+  onRatingUpdate: (newRating: number) => void;
+}
+
+const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({ 
+  onClose, 
+  userRating, 
+  onRatingUpdate 
+}) => {
+  const { restaurantId } = useParams<{ restaurantId: string }>();
+  const [restaurant, setRestaurant] = useState<any>(null);
+  const [tempRating, setTempRating] = useState(userRating); // Initialize with user's current rating
+  const [loading, setLoading] = useState(false);
+
+  const primaryColor = restaurant?.theme?.primaryColor || '#FF6B6B';
+
+  // Get or create customer ID from localStorage
+  const getCustomerId = () => {
+    let customerId = localStorage.getItem('customer_id');
+    if (!customerId) {
+      customerId = `customer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('customer_id', customerId);
+    }
+    return customerId;
+  };
+
+  // Custom toast function for this component
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'success') => {
+    // You can implement a toast here or use the existing one
+    console.log(`${type}: ${message}`);
+  };
+
+  useEffect(() => {
+    if (restaurantId) {
+      loadRestaurantData();
+    }
+  }, [restaurantId]);
+
+  // Update tempRating when userRating prop changes
+  useEffect(() => {
+    setTempRating(userRating);
+  }, [userRating]);
+
+  const loadRestaurantData = async () => {
+    try {
+      const response = await fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setRestaurant(data.restaurant || data);
+      }
+    } catch (error) {
+      console.error('Failed to load restaurant data:', error);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (tempRating === 0) {
+      showToast('Please select a rating', 'error');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const customerId = getCustomerId();
+      const response = await fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}/rate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rating: tempRating,
+          sessionId: customerId,
+          action: 'set'
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || errorData.error || 'Failed to submit restaurant rating');
+      }
+
+      const data = await response.json();
+      
+      // Update the restaurant data with new rating
+      setRestaurant((prev: any) => ({
+        ...prev,
+        rating: data.restaurant.rating
+      }));
+      
+      // Notify parent component about the rating update
+      onRatingUpdate(tempRating);
+      
+      showToast('Restaurant rating submitted successfully!', 'success');
+      
+      // Close modal
+      onClose();
+      
+    } catch (error: any) {
+      console.error('❌ Restaurant rating submission error:', error);
+      showToast(`Failed to submit rating: ${error.message}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
+  if (!restaurant) return null;
+
+  return (
+    <div 
+      className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out"
+      onClick={handleBackdropClick}
+    >
+      <div className="bg-white w-full max-w-md overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
+        <div className="p-6 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-gray-900">
+              {userRating > 0 ? 'Update Your Rating for' : 'Rate'} {restaurant?.name}
+            </h2>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <i className="ri-close-line text-lg text-gray-700"></i>
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6">
+          {/* Restaurant Info */}
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden flex-shrink-0">
+              {restaurant.logo ? (
+                <img
+                  src={`http://localhost:5000${restaurant.logo}`}
+                  alt={restaurant.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <i className="ri-restaurant-line text-2xl text-gray-400"></i>
+                </div>
+              )}
+            </div>
+            <div>
+              <h3 className="font-semibold text-gray-900">{restaurant.name}</h3>
+              <p className="text-sm text-gray-500">
+                Current: {restaurant.rating?.average ? restaurant.rating.average.toFixed(1) : 'No ratings yet'}
+                {restaurant.rating?.count ? ` (${restaurant.rating.count} reviews)` : ''}
+              </p>
+              {userRating > 0 && (
+                <p className="text-sm text-amber-600 font-medium mt-1">
+                  Your current rating: {userRating} ★
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Star Rating */}
+          <div className="text-center mb-6">
+            <p className="text-sm font-medium text-gray-700 mb-4">
+              {userRating > 0 ? 'Update your rating for:' : 'How would you rate this restaurant?'}
+            </p>
+            <div className="flex justify-center gap-2">
+              {[1, 2, 3, 4, 5].map((star) => (
+                <button
+                  key={star}
+                  onClick={() => setTempRating(star)}
+                  className="transition-transform hover:scale-110"
+                >
+                  <i 
+                    className={`${star <= tempRating ? 'ri-star-fill' : 'ri-star-line'} text-4xl`}
+                    style={{ color: star <= tempRating ? '#FCD34D' : '#D1D5DB' }}
+                  ></i>
+                </button>
+              ))}
+            </div>
+            {tempRating > 0 && (
+              <p className="mt-3 text-sm font-medium" style={{ color: primaryColor }}>
+                {tempRating === 1 && 'Poor'}
+                {tempRating === 2 && 'Fair'}
+                {tempRating === 3 && 'Good'}
+                {tempRating === 4 && 'Very Good'}
+                {tempRating === 5 && 'Excellent'}
+              </p>
+            )}
+          </div>
+
+          {/* Submit Button */}
+          <button
+            onClick={handleSubmit}
+            disabled={tempRating === 0 || loading}
+            className="w-full text-white py-4 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{ backgroundColor: primaryColor }}
+          >
+            {loading ? 'Submitting...' : userRating > 0 ? 'Update Rating' : 'Submit Rating'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ... (keep all the existing component code below - MenuItemCard, CartModalContent, CustomerInfoModal, RatingModal, CustomerMenuToast, TakeawayModal)
 
 interface MenuItemCardProps {
   item: MenuItem;

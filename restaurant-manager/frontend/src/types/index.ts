@@ -61,6 +61,17 @@ export interface Restaurant {
   isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;
+  rating?: {
+    average: number;
+    count: number;
+    distribution?: {
+      1: number;
+      2: number;
+      3: number;
+      4: number;
+      5: number;
+    };
+  };
 }
 
 // Settings Types

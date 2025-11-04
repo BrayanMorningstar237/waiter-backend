@@ -33,6 +33,19 @@ const menuItemSchema = new mongoose.Schema({
     type: String,
     trim: true
   }],
+  // Add to your MenuItem schema:
+userRatings: [{
+  sessionId: String,
+  rating: Number,
+  createdAt: Date,
+  updatedAt: Date
+}],
+userLikes: [String], // Array of sessionIds who liked
+userViews: [{
+  sessionId: String,
+  lastViewed: Date,
+  viewCount: Number
+}],
   allergens: [{
     type: String,
     trim: true
