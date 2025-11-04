@@ -1948,10 +1948,7 @@ const TakeawayModal: React.FC<TakeawayModalProps> = ({
     }
   };
 
-  const takeawayPrice = item.takeaway?.takeawayPrice || item.totalTakeawayPrice;
-const priceDifference = takeawayPrice && takeawayPrice !== item.price
-  ? takeawayPrice - item.price
-  : 0;
+  
 
   return (
     <div 
@@ -2039,11 +2036,12 @@ const priceDifference = takeawayPrice && takeawayPrice !== item.price
                   <p className="font-bold text-lg text-blue-600">
                     {item.totalTakeawayPrice?.toLocaleString() || item.price.toLocaleString()} CFA
                   </p>
-                  {priceDifference !== 0 && (
-                    <p className="text-xs text-gray-500">
-                      {priceDifference > 0 ? `+${priceDifference.toLocaleString()}` : `${priceDifference.toLocaleString()}`} CFA
-                    </p>
-                  )}
+                 {item.takeaway && (
+  <p className="text-xs sm:text-sm text-gray-500 truncate">
+    {`${item.takeaway.takeawayPrice.toLocaleString()} CFA + ${item.takeaway.packagingFee.toLocaleString()} CFA`}
+  </p>
+)}
+
                 </div>
               </div>
             </button>
