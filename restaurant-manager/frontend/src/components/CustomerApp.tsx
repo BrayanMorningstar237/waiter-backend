@@ -45,8 +45,8 @@ const RestaurantList: React.FC = () => {
     try {
       setLoading(true);
       const [restaurantsResponse, categoriesResponse] = await Promise.all([
-        fetch('http://localhost:5000/api/restaurants'),
-        fetch('http://localhost:5000/api/public/categories'),
+        fetch('https://waiter-backend-j4c4.onrender.com/api/restaurants'),
+        fetch('https://waiter-backend-j4c4.onrender.com/api/public/categories'),
       ]);
 
       const restaurantsData = await restaurantsResponse.json();
@@ -83,7 +83,7 @@ const RestaurantList: React.FC = () => {
     setFilterLoading(true);
     try {
       const response = await fetch(
-        `http://localhost:5000/api/public/restaurants/by-category/${encodeURIComponent(categoryName)}`
+        `https://waiter-backend-j4c4.onrender.com/api/public/restaurants/by-category/${encodeURIComponent(categoryName)}`
       );
       const data = await response.json();
 
@@ -126,7 +126,7 @@ const RestaurantList: React.FC = () => {
       setFilterLoading(true);
       try {
         const response = await fetch(
-          `http://localhost:5000/api/public/restaurants/by-category/${encodeURIComponent(selectedCategory)}`
+          `https://waiter-backend-j4c4.onrender.com/api/public/restaurants/by-category/${encodeURIComponent(selectedCategory)}`
         );
         const data = await response.json();
 
@@ -283,7 +283,7 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, selectedCat
     const loadRestaurantCategories = async () => {
       setLoadingCategories(true);
       try {
-        const response = await fetch(`http://localhost:5000/api/public/restaurants/${restaurant._id}/categories`);
+        const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/public/restaurants/${restaurant._id}/categories`);
         const data = await response.json();
         if (response.ok) setRestaurantCategories(data.categories || []);
       } catch (error) {
@@ -302,7 +302,7 @@ const RestaurantCard: React.FC<RestaurantCardProps> = ({ restaurant, selectedCat
       <div className="h-40 bg-slate-100 flex items-center justify-center relative overflow-hidden">
         {restaurant.logo ? (
           <img
-            src={`http://localhost:5000${restaurant.logo}`}
+            src={`https://waiter-backend-j4c4.onrender.com${restaurant.logo}`}
             alt={restaurant.name}
             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
           />

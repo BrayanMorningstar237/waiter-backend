@@ -450,7 +450,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = React.memo(({ item, onEdit, on
       <div className="relative overflow-hidden aspect-[4/3]">
         {item.image ? (
           <img
-            src={`http://localhost:5000${item.image}`}
+            src={`https://waiter-backend-j4c4.onrender.com${item.image}`}
             alt={item.name}
             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
             loading="lazy"

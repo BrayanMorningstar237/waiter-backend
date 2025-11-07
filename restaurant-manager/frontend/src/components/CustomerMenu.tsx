@@ -111,7 +111,7 @@ const loadRestaurantRating = async () => {
   try {
     const customerId = getCustomerId();
     const response = await fetch(
-      `http://localhost:5000/api/public/restaurants/${restaurantId}/user-rating?sessionId=${customerId}`
+      `https://waiter-backend-j4c4.onrender.com/api/public/restaurants/${restaurantId}/user-rating?sessionId=${customerId}`
     );
     
     if (response.ok) {
@@ -248,9 +248,9 @@ const loadRestaurantRating = async () => {
       setLoading(true);
       
       const [restaurantResponse, menuResponse, categoriesResponse] = await Promise.all([
-        fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}`),
-        fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}/menu`),
-        fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}/categories`)
+        fetch(`https://waiter-backend-j4c4.onrender.com/api/public/restaurants/${restaurantId}`),
+        fetch(`https://waiter-backend-j4c4.onrender.com/api/public/restaurants/${restaurantId}/menu`),
+        fetch(`https://waiter-backend-j4c4.onrender.com/api/public/restaurants/${restaurantId}/categories`)
       ]);
 
       if (!restaurantResponse.ok) throw new Error('Failed to load restaurant');
@@ -372,7 +372,7 @@ const handleLike = async (itemId: string, isLiked: boolean) => {
     const customerId = getCustomerId();
     const action = isLiked ? 'unlike' : 'like';
     
-    const response = await fetch(`http://localhost:5000/api/public/menu-items/${itemId}/like`, {
+    const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/public/menu-items/${itemId}/like`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -427,7 +427,7 @@ const handleSubmitRating = async () => {
   try {
     const customerId = getCustomerId();
 
-    const response = await fetch(`http://localhost:5000/api/public/menu-items/${ratingItemId}/rate`, {
+    const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/public/menu-items/${ratingItemId}/rate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -509,14 +509,14 @@ const handleCustomerInfoSubmit = async () => {
     let tableId = null;
     if (tableNumber) {
       // Try to find existing table
-      const tablesResponse = await fetch(`http://localhost:5000/api/tables?restaurant=${restaurantId}&tableNumber=${tableNumber}`);
+      const tablesResponse = await fetch(`https://waiter-backend-j4c4.onrender.com/api/tables?restaurant=${restaurantId}&tableNumber=${tableNumber}`);
       if (tablesResponse.ok) {
         const tablesData = await tablesResponse.json();
         if (tablesData.tables && tablesData.tables.length > 0) {
           tableId = tablesData.tables[0]._id;
         } else {
           // Create new table if doesn't exist
-          const createTableResponse = await fetch('http://localhost:5000/api/tables', {
+          const createTableResponse = await fetch('https://waiter-backend-j4c4.onrender.com/api/tables', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -582,7 +582,7 @@ const handleCustomerInfoSubmit = async () => {
 
     console.log('📦 Sending order data:', orderData);
 
-    const response = await fetch('http://localhost:5000/api/orders', {
+    const response = await fetch('https://waiter-backend-j4c4.onrender.com/api/orders', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -724,7 +724,7 @@ const handleCustomerInfoSubmit = async () => {
               <div className="w-14 h-14 sm:w-20 sm:h-20 bg-gradient-to-br from-orange-50 to-amber-50 rounded-xl shadow-sm border border-orange-100 overflow-hidden flex items-center justify-center hover:shadow-md transition-shadow">
                 {restaurant.logo ? (
                   <img
-                    src={`http://localhost:5000${restaurant.logo}`}
+                    src={`https://waiter-backend-j4c4.onrender.com${restaurant.logo}`}
                     alt={restaurant.name}
                     className="w-full h-full object-cover"
                   />
@@ -1146,7 +1146,7 @@ const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({
 
   const loadRestaurantData = async () => {
     try {
-      const response = await fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}`);
+      const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/public/restaurants/${restaurantId}`);
       if (response.ok) {
         const data = await response.json();
         setRestaurant(data.restaurant || data);
@@ -1165,7 +1165,7 @@ const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({
     setLoading(true);
     try {
       const customerId = getCustomerId();
-      const response = await fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}/rate`, {
+      const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/public/restaurants/${restaurantId}/rate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1240,7 +1240,7 @@ const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({
             <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden flex-shrink-0">
               {restaurant.logo ? (
                 <img
-                  src={`http://localhost:5000${restaurant.logo}`}
+                  src={`https://waiter-backend-j4c4.onrender.com${restaurant.logo}`}
                   alt={restaurant.name}
                   className="w-full h-full object-cover"
                 />
@@ -1355,7 +1355,7 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
       <div className="relative h-36 sm:h-48 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl sm:rounded-2xl overflow-hidden mb-3 sm:mb-4">
         {item.image ? (
           <img
-            src={`http://localhost:5000${item.image}`}
+            src={`https://waiter-backend-j4c4.onrender.com${item.image}`}
             alt={item.name}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
           />
@@ -1573,7 +1573,7 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
                   <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gray-200 rounded-lg sm:rounded-xl overflow-hidden flex-shrink-0">
                     {item.image ? (
                       <img
-                        src={`http://localhost:5000${item.image}`}
+                        src={`https://waiter-backend-j4c4.onrender.com${item.image}`}
                         alt={item.name}
                         className="w-full h-full object-cover"
                       />
@@ -1825,7 +1825,7 @@ const RatingModal: React.FC<RatingModalProps> = ({
             <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden flex-shrink-0">
               {item.image ? (
                 <img
-                  src={`http://localhost:5000${item.image}`}
+                  src={`https://waiter-backend-j4c4.onrender.com${item.image}`}
                   alt={item.name}
                   className="w-full h-full object-cover"
                 />
@@ -2005,7 +2005,7 @@ const TakeawayModal: React.FC<TakeawayModalProps> = ({
             <div className="w-16 h-16 bg-gray-200 rounded-xl overflow-hidden flex-shrink-0">
               {item.image ? (
                 <img
-                  src={`http://localhost:5000${item.image}`}
+                  src={`https://waiter-backend-j4c4.onrender.com${item.image}`}
                   alt={item.name}
                   className="w-full h-full object-cover"
                 />

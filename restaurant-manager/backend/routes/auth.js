@@ -1,6 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const cors = require('cors');
 
 console.log('🔧 Loading models for auth route...');
 const User = require('../models/user');
@@ -8,6 +9,14 @@ const Restaurant = require('../models/Restaurant'); // Add this import
 console.log('✅ Models loaded successfully');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-fallback-secret-key-change-in-production';
+// Enable CORS for your frontend URL only (more secure)
+app.use(cors({
+  origin: 'https://waiter-frontend-cu6rrtd7h-waiters-projects-9df096ac.vercel.app', // <-- replace with your Vercel URL
+  credentials: true, // if you plan to send cookies
+}));
+
+// Or for testing / open access (not recommended for production)
+// app.use(cors());
 
 const router = express.Router();
 
