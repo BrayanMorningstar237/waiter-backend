@@ -106,6 +106,8 @@ const [restaurantUserRating, setRestaurantUserRating] = useState(0);
   // Customer info modal state - only name now
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [customerName, setCustomerName] = useState('');
+  //Order submission loading state
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   // Load restaurant rating on component mount
 const loadRestaurantRating = async () => {
   try {
@@ -318,14 +320,16 @@ const averageRestaurantRating = getRestaurantRating();
         setShowTakeawayModal(true);
         return prev; // Don't add yet, wait for user choice
       }
+      showCustomerToast('Item added to cart!', 'success');
       return {
         ...prev,
         [itemId]: { quantity: 1, isTakeaway }
+        
       };
     }
-  });
+  }); 
   
-  showCustomerToast('Item added to cart!', 'success');
+  
   setCartAnimation(true);
   setTimeout(() => setCartAnimation(false), 600);
 };
@@ -495,14 +499,20 @@ const handleSubmitRating = async () => {
 
   // Handle customer info submission
   // Handle customer info submission
+// Handle customer info submission with loading state
 const handleCustomerInfoSubmit = async () => {
+  // Prevent multiple submissions
+  if (isSubmittingOrder) {
+    return;
+  }
+
   if (!customerName.trim()) {
     showCustomerToast('Please enter your name', 'error');
     return;
   }
 
-  // Save customer name to localStorage for future ratings
-  localStorage.setItem('customer_name', customerName.trim());
+  // Set loading state
+  setIsSubmittingOrder(true);
 
   try {
     // First, find or create the table
@@ -610,6 +620,9 @@ const handleCustomerInfoSubmit = async () => {
   } catch (error: any) {
     console.error('❌ Order creation error:', error);
     showCustomerToast(`Failed to place order: ${error.message}`, 'error');
+  } finally {
+    // Reset loading state regardless of success or failure
+    setIsSubmittingOrder(false);
   }
 };
 
@@ -1034,28 +1047,29 @@ const handleCustomerInfoSubmit = async () => {
       )}
 
       {/* Customer Info Modal */}
-      {showCustomerModal && (
-        <CustomerInfoModal
-          customerName={customerName}
-          onCustomerNameChange={setCustomerName}
-          onSubmit={handleCustomerInfoSubmit}
-          onClose={handleCloseCustomerModal}
-          primaryColor={primaryColor}
-          cartItems={Object.entries(cart).map(([itemId, cartItem]) => {
-            const item = menuItems.find(mi => mi._id === itemId);
-            return item ? { ...item, quantity: cartItem.quantity, isTakeaway: cartItem.isTakeaway } : null;
-          }).filter(Boolean) as (MenuItem & { quantity: number; isTakeaway: boolean })[]}
-          total={Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
-            const item = menuItems.find(mi => mi._id === itemId);
-            const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
-              ? item.totalTakeawayPrice 
-              : item?.price || 0;
-            return sum + (price * cartItem.quantity);
-          }, 0)}
-          tableNumber={tableNumber}
-        />
-      )}
-
+      // In the CustomerMenu component's return statement, update the CustomerInfoModal usage:
+{showCustomerModal && (
+  <CustomerInfoModal
+    customerName={customerName}
+    onCustomerNameChange={setCustomerName}
+    onSubmit={handleCustomerInfoSubmit}
+    onClose={handleCloseCustomerModal}
+    primaryColor={primaryColor}
+    cartItems={Object.entries(cart).map(([itemId, cartItem]) => {
+      const item = menuItems.find(mi => mi._id === itemId);
+      return item ? { ...item, quantity: cartItem.quantity, isTakeaway: cartItem.isTakeaway } : null;
+    }).filter(Boolean) as (MenuItem & { quantity: number; isTakeaway: boolean })[]}
+    total={Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
+      const item = menuItems.find(mi => mi._id === itemId);
+      const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
+        ? item.totalTakeawayPrice 
+        : item?.price || 0;
+      return sum + (price * cartItem.quantity);
+    }, 0)}
+    tableNumber={tableNumber}
+    isSubmitting={isSubmittingOrder} // Add this prop
+  />
+)}
       {/* Rating Modal */}
       {showRatingModal && (
         <RatingModal
@@ -1666,6 +1680,7 @@ interface CustomerInfoModalProps {
   cartItems: (MenuItem & { quantity: number; isTakeaway: boolean })[];
   total: number;
   tableNumber: string;
+  isSubmitting?: boolean;
 }
 
 const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
@@ -1676,10 +1691,11 @@ const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
   primaryColor,
   cartItems,
   total,
-  tableNumber
+  tableNumber,
+  isSubmitting = false // Default to false
 }) => {
   const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
+    if (e.target === e.currentTarget && !isSubmitting) {
       onClose();
     }
   };
@@ -1692,13 +1708,17 @@ const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
       <div className="bg-white w-full max-w-md max-h-[90vh] overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
         <div className="p-6 border-b border-gray-100 flex-shrink-0">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-gray-900">Complete Your Order</h2>
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
-            >
-              <i className="ri-close-line text-lg text-gray-700"></i>
-            </button>
+            <h2 className="text-xl font-bold text-gray-900">
+              {isSubmitting ? 'Placing Order...' : 'Complete Your Order'}
+            </h2>
+            {!isSubmitting && (
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+              >
+                <i className="ri-close-line text-lg text-gray-700"></i>
+              </button>
+            )}
           </div>
         </div>
 
@@ -1738,39 +1758,59 @@ const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
           </div>
 
           {/* Customer Information Form - Only Name */}
-          <div className="space-y-4">
-            <h3 className="font-semibold text-gray-900">Your Information</h3>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Your Name <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={customerName}
-                onChange={(e) => onCustomerNameChange(e.target.value)}
-                placeholder="Enter your name"
-                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm transition-all placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white focus:border-red-300"
-                autoFocus
-              />
+          {!isSubmitting && (
+            <div className="space-y-4">
+              <h3 className="font-semibold text-gray-900">Your Information</h3>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Your Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => onCustomerNameChange(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm transition-all placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white focus:border-red-300"
+                  autoFocus
+                  disabled={isSubmitting}
+                />
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Loading State */}
+          {isSubmitting && (
+            <div className="text-center py-8">
+              <div className="inline-block w-12 h-12 border-4 border-gray-200 border-t-red-500 rounded-full animate-spin mb-4"></div>
+              <p className="text-gray-600 font-medium">Processing your order...</p>
+              <p className="text-gray-500 text-sm mt-2">Please wait</p>
+            </div>
+          )}
         </div>
 
         <div className="border-t border-gray-100 bg-gray-50 p-6 flex-shrink-0">
           <button
             onClick={onSubmit}
-            disabled={!customerName.trim()}
-            className="w-full text-white py-4 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!customerName.trim() || isSubmitting}
+            className="w-full text-white py-4 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed relative"
             style={{ backgroundColor: primaryColor }}
           >
-            Confirm Order
+            {isSubmitting ? (
+              <>
+                <div className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                Processing Order...
+              </>
+            ) : (
+              'Confirm Order'
+            )}
           </button>
         </div>
       </div>
     </div>
   );
 };
+
 
 // Rating Modal Component
 interface RatingModalProps {
