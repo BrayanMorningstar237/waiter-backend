@@ -3,10 +3,14 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('./config/cloudinary');
 require('dotenv').config();
 
 const app = express();
-const multer = require('multer');
+
+// Import models
 const Order = require('./models/Order');
 const Restaurant = require('./models/Restaurant');
 const User = require('./models/user');
@@ -14,62 +18,70 @@ const Category = require('./models/Category');
 const MenuItem = require('./models/MenuItem');
 const Table = require('./models/Table');
 
-// Configure multer for menu item images
-const menuItemStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, '../frontend/public/images/menu-items'));
-  },
-  filename: function (req, file, cb) {
-    const now = new Date();
-    const dateTime = now.toISOString()
-      .replace(/:/g, '-')
-      .replace(/\..+/, '');
-    
-    let restaurantName = 'restaurant';
-    let menuItemName = 'item';
-    
-    if (req.user && req.user.restaurant && req.user.restaurant.name) {
-      restaurantName = req.user.restaurant.name
-        .toLowerCase()
-        .replace(/\s+/g, '-')
-        .replace(/[^a-z0-9-]/g, '');
-    }
-    
-    if (req.body && req.body.name) {
-      menuItemName = req.body.name
-        .toLowerCase()
-        .replace(/\s+/g, '-')
-        .replace(/[^a-z0-9-]/g, '');
-    }
-    
-    const uniqueFilename = `${restaurantName}-${menuItemName}-${dateTime}${path.extname(file.originalname)}`;
-    
-    console.log(`📸 Saving image as: ${uniqueFilename}`);
-    cb(null, uniqueFilename);
+// Configure Cloudinary storage for menu items
+const menuItemStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'menu-items',
+    format: async (req, file) => {
+      const format = file.mimetype.split('/')[1];
+      return format === 'jpeg' ? 'jpg' : format;
+    },
+    public_id: (req, file) => {
+      const now = new Date();
+      const dateTime = now.toISOString().replace(/:/g, '-').replace(/\..+/, '');
+      
+      let restaurantName = 'restaurant';
+      let menuItemName = 'item';
+      
+      if (req.user && req.user.restaurant && req.user.restaurant.name) {
+        restaurantName = req.user.restaurant.name
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/[^a-z0-9-]/g, '');
+      }
+      
+      if (req.body && req.body.name) {
+        menuItemName = req.body.name
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/[^a-z0-9-]/g, '');
+      }
+      
+      return `${restaurantName}-${menuItemName}-${dateTime}`;
+    },
+    transformation: [
+      { width: 800, height: 600, crop: 'limit', quality: 'auto' }
+    ]
   }
 });
 
-// Configure multer for restaurant logos
-const logoStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, path.join(__dirname, '../frontend/public/images/restaurant-logos'));
-  },
-  filename: function (req, file, cb) {
-    const now = new Date();
-    const dateTime = now.toISOString().replace(/:/g, '-').replace(/\..+/, '');
-    
-    let restaurantName = 'restaurant';
-    if (req.user && req.user.restaurant && req.user.restaurant.name) {
-      restaurantName = req.user.restaurant.name
-        .toLowerCase()
-        .replace(/\s+/g, '-')
-        .replace(/[^a-z0-9-]/g, '');
-    }
-    
-    const uniqueFilename = `logo-${restaurantName}-${dateTime}${path.extname(file.originalname)}`;
-    
-    console.log(`🖼️ Saving logo as: ${uniqueFilename}`);
-    cb(null, uniqueFilename);
+// Configure Cloudinary storage for restaurant logos
+const logoStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'restaurant-logos',
+    format: async (req, file) => {
+      const format = file.mimetype.split('/')[1];
+      return format === 'jpeg' ? 'jpg' : format;
+    },
+    public_id: (req, file) => {
+      const now = new Date();
+      const dateTime = now.toISOString().replace(/:/g, '-').replace(/\..+/, '');
+      
+      let restaurantName = 'restaurant';
+      if (req.user && req.user.restaurant && req.user.restaurant.name) {
+        restaurantName = req.user.restaurant.name
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/[^a-z0-9-]/g, '');
+      }
+      
+      return `logo-${restaurantName}-${dateTime}`;
+    },
+    transformation: [
+      { width: 300, height: 300, crop: 'limit', quality: 'auto' }
+    ]
   }
 });
 
@@ -101,6 +113,28 @@ const logoUpload = multer({
   }
 });
 
+// Helper function to delete images from Cloudinary
+const deleteCloudinaryImage = async (imageUrl) => {
+  try {
+    if (!imageUrl || !imageUrl.includes('cloudinary.com')) {
+      return; // Not a Cloudinary image
+    }
+
+    // Extract public_id from Cloudinary URL
+    const urlParts = imageUrl.split('/');
+    const publicIdWithExtension = urlParts[urlParts.length - 1];
+    const publicId = publicIdWithExtension.split('.')[0];
+    const folder = urlParts[urlParts.length - 2];
+    
+    const fullPublicId = `${folder}/${publicId}`;
+    
+    await cloudinary.uploader.destroy(fullPublicId);
+    console.log('🗑️ Deleted image from Cloudinary:', fullPublicId);
+  } catch (error) {
+    console.error('❌ Failed to delete image from Cloudinary:', error);
+  }
+};
+
 // Middleware
 app.use(cors({
   origin: true,
@@ -108,9 +142,6 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
-// Serve static files from frontend public folder
-app.use('/images', express.static(path.join(__dirname, '../frontend/public/images')));
 
 // Request logging
 app.use((req, res, next) => {
@@ -201,7 +232,7 @@ app.put('/api/restaurants/current', auth, async (req, res) => {
   }
 });
 
-// Update restaurant logo (protected)
+// Update restaurant logo (protected) - UPDATED FOR CLOUDINARY
 app.put('/api/restaurants/current/logo', auth, logoUpload.single('logo'), async (req, res) => {
   try {
     if (!req.file) {
@@ -209,13 +240,17 @@ app.put('/api/restaurants/current/logo', auth, logoUpload.single('logo'), async 
     }
 
     console.log('🖼️ Updating restaurant logo for:', req.user.restaurant.name);
-    console.log('📸 Logo file:', req.file.filename);
+    console.log('📸 Logo uploaded to Cloudinary:', req.file.path);
 
-    const logoPath = `/images/restaurant-logos/${req.file.filename}`;
-    
+    // Delete old logo from Cloudinary if it exists
+    const currentRestaurant = await Restaurant.findById(req.user.restaurant._id);
+    if (currentRestaurant.logo && currentRestaurant.logo.includes('cloudinary.com')) {
+      await deleteCloudinaryImage(currentRestaurant.logo);
+    }
+
     const restaurant = await Restaurant.findByIdAndUpdate(
       req.user.restaurant._id,
-      { logo: logoPath },
+      { logo: req.file.path }, // Cloudinary URL
       { new: true }
     );
 
@@ -338,7 +373,7 @@ app.get('/api/restaurants/:id', async (req, res) => {
 });
 
 // ============================================================================
-// MENU ITEMS ROUTES
+// MENU ITEMS ROUTES - UPDATED FOR CLOUDINARY
 // ============================================================================
 
 app.get('/api/menu-items', auth, async (req, res) => {
@@ -369,7 +404,7 @@ app.get('/api/menu-items', auth, async (req, res) => {
   }
 });
 
-// Update menu item (protected)
+// Update menu item (protected) - UPDATED FOR CLOUDINARY
 app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
     const existingItem = await MenuItem.findById(req.params.id);
@@ -407,8 +442,13 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
     };
 
     if (req.file) {
-      updateData.image = `/images/menu-items/${req.file.filename}`;
-      console.log('📸 New image saved:', req.file.filename);
+      // Delete old image from Cloudinary if it exists
+      if (existingItem.image && existingItem.image.includes('cloudinary.com')) {
+        await deleteCloudinaryImage(existingItem.image);
+      }
+      
+      updateData.image = req.file.path; // Cloudinary URL
+      console.log('📸 New image uploaded to Cloudinary:', req.file.path);
     }
 
     const menuItem = await MenuItem.findByIdAndUpdate(
@@ -433,12 +473,31 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
   }
 });
 
-// Create menu item (protected)
+// Create menu item (protected) - UPDATED FOR CLOUDINARY
+// Create menu item (protected) - UPDATED FOR CLOUDINARY
 app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
     console.log('📦 Creating menu item with data:', req.body);
     console.log('🏪 Restaurant:', req.user.restaurant.name);
     
+    // ADD THESE DEBUG LOGS:
+    console.log('🔍 DEBUG - Files received:', req.file);
+    console.log('🔍 DEBUG - Request body:', req.body);
+    console.log('🔍 DEBUG - Headers:', req.headers['content-type']);
+    
+    if (req.file) {
+      console.log('✅ File received successfully:', {
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        path: req.file.path,
+        filename: req.file.filename
+      });
+    } else {
+      console.log('❌ No file received in req.file');
+      console.log('🔍 Available request properties:', Object.keys(req));
+    }
+
     const menuItemData = {
       ...req.body,
       restaurant: req.user.restaurant._id,
@@ -464,8 +523,10 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
     };
 
     if (req.file) {
-      menuItemData.image = `/images/menu-items/${req.file.filename}`;
-      console.log('📸 Image saved:', req.file.filename);
+      menuItemData.image = req.file.path; // Cloudinary URL
+      console.log('📸 Image uploaded to Cloudinary:', req.file.path);
+    } else {
+      console.log('⚠️ No image file attached to request');
     }
 
     const menuItem = new MenuItem(menuItemData);
@@ -476,6 +537,7 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
       .populate('restaurant', 'name');
 
     console.log('✅ Menu item created successfully:', populatedItem.name);
+    console.log('🖼️ Final image URL:', populatedItem.image);
     
     res.status(201).json({
       message: 'Menu item created successfully',
@@ -487,7 +549,7 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
   }
 });
 
-// Delete menu item (protected)
+// Delete menu item (protected) - UPDATED FOR CLOUDINARY
 app.delete('/api/menu-items/:id', auth, async (req, res) => {
   try {
     const existingItem = await MenuItem.findById(req.params.id);
@@ -501,6 +563,11 @@ app.delete('/api/menu-items/:id', auth, async (req, res) => {
 
     console.log('🗑️ Deleting menu item:', existingItem.name);
     console.log('🏪 Restaurant:', req.user.restaurant.name);
+
+    // Delete image from Cloudinary if it exists
+    if (existingItem.image && existingItem.image.includes('cloudinary.com')) {
+      await deleteCloudinaryImage(existingItem.image);
+    }
 
     const menuItem = await MenuItem.findByIdAndDelete(req.params.id);
     
@@ -1118,173 +1185,6 @@ app.get('/api/orders/:id', auth, async (req, res) => {
   }
 });
 
-// ============================================================================
-// RESTAURANT RATING ENDPOINTS
-// ============================================================================
-
-// Rate/Update/Remove restaurant rating (public)
-app.post('/api/public/restaurants/:id/rate', async (req, res) => {
-  try {
-    const { rating, sessionId, action = 'set' } = req.body;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
-    }
-
-    const restaurant = await Restaurant.findById(req.params.id);
-    if (!restaurant) {
-      return res.status(404).json({ error: 'Restaurant not found' });
-    }
-
-    let userRating = null;
-    let message = '';
-
-    // Initialize restaurant ratings array if it doesn't exist
-    if (!restaurant.userRatings) restaurant.userRatings = [];
-
-    // Check if user already rated this restaurant
-    const existingRating = restaurant.userRatings.find(r => r.sessionId === sessionId);
-
-    switch (action) {
-      case 'set':
-        if (!rating || rating < 1 || rating > 5) {
-          return res.status(400).json({ error: 'Rating must be between 1 and 5' });
-        }
-        
-        if (existingRating) {
-          // Update existing rating
-          existingRating.rating = rating;
-          existingRating.updatedAt = new Date();
-          message = 'Restaurant rating updated successfully';
-        } else {
-          // Add new rating
-          restaurant.userRatings.push({
-            sessionId,
-            rating,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          });
-          message = 'Restaurant rating submitted successfully';
-        }
-        userRating = rating;
-        break;
-
-      case 'remove':
-        if (existingRating) {
-          restaurant.userRatings = restaurant.userRatings.filter(r => r.sessionId !== sessionId);
-          message = 'Restaurant rating removed successfully';
-        } else {
-          return res.status(404).json({ error: 'No restaurant rating found to remove' });
-        }
-        break;
-
-      default:
-        return res.status(400).json({ error: 'Invalid action' });
-    }
-
-    // Recalculate restaurant average rating
-    if (restaurant.userRatings.length > 0) {
-      const total = restaurant.userRatings.reduce((sum, r) => sum + r.rating, 0);
-      restaurant.rating = {
-        average: total / restaurant.userRatings.length,
-        count: restaurant.userRatings.length,
-        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
-      };
-      
-      // Update rating distribution
-      restaurant.userRatings.forEach(r => {
-        restaurant.rating.distribution[r.rating]++;
-      });
-    } else {
-      restaurant.rating = {
-        average: 0,
-        count: 0,
-        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
-      };
-    }
-
-    await restaurant.save();
-
-    console.log(`🏪 ${message} for ${restaurant.name} by session ${sessionId.substring(0, 8)}...`);
-    
-    res.json({
-      message,
-      restaurant: {
-        id: restaurant._id,
-        name: restaurant.name,
-        rating: restaurant.rating,
-        userRating: userRating
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to process restaurant rating:', error);
-    res.status(500).json({ error: 'Failed to process restaurant rating', details: error.message });
-  }
-});
-
-// Get user's restaurant rating (public)
-app.get('/api/public/restaurants/:id/user-rating', async (req, res) => {
-  try {
-    const { sessionId } = req.query;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
-    }
-
-    const restaurant = await Restaurant.findById(req.params.id);
-    if (!restaurant) {
-      return res.status(404).json({ error: 'Restaurant not found' });
-    }
-
-    const userRating = restaurant.userRatings?.find(r => r.sessionId === sessionId);
-
-    res.json({
-      message: 'User restaurant rating retrieved successfully',
-      userRating: userRating ? userRating.rating : null,
-      hasRated: !!userRating
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch user restaurant rating:', error);
-    res.status(500).json({ error: 'Failed to fetch user restaurant rating', details: error.message });
-  }
-});
-
-// Get restaurant with user engagement data (public)
-app.get('/api/public/restaurants/:id/engagement', async (req, res) => {
-  try {
-    const { sessionId } = req.query;
-    
-    const restaurant = await Restaurant.findById(req.params.id)
-      .select('name description logo contact address theme rating userRatings');
-    
-    if (!restaurant) {
-      return res.status(404).json({ error: 'Restaurant not found' });
-    }
-
-    let userRating = null;
-
-    if (sessionId) {
-      // Get user's restaurant rating
-      const ratingObj = restaurant.userRatings?.find(r => r.sessionId === sessionId);
-      userRating = ratingObj ? ratingObj.rating : null;
-    }
-
-    // Remove user-specific arrays from response for security
-    const restaurantData = restaurant.toObject();
-    delete restaurantData.userRatings;
-
-    res.json({
-      message: 'Restaurant engagement data retrieved successfully',
-      restaurant: {
-        ...restaurantData,
-        userRating: userRating
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch restaurant engagement:', error);
-    res.status(500).json({ error: 'Failed to fetch restaurant engagement', details: error.message });
-  }
-});
 // Create new order with table support
 app.post('/api/orders', async (req, res) => {
   try {
@@ -1561,6 +1461,173 @@ app.put('/api/orders/:id/unpay', auth, async (req, res) => {
   }
 });
 
+// ============================================================================
+// RESTAURANT RATING ENDPOINTS
+// ============================================================================
+
+// Rate/Update/Remove restaurant rating (public)
+app.post('/api/public/restaurants/:id/rate', async (req, res) => {
+  try {
+    const { rating, sessionId, action = 'set' } = req.body;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
+    }
+
+    const restaurant = await Restaurant.findById(req.params.id);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    let userRating = null;
+    let message = '';
+
+    // Initialize restaurant ratings array if it doesn't exist
+    if (!restaurant.userRatings) restaurant.userRatings = [];
+
+    // Check if user already rated this restaurant
+    const existingRating = restaurant.userRatings.find(r => r.sessionId === sessionId);
+
+    switch (action) {
+      case 'set':
+        if (!rating || rating < 1 || rating > 5) {
+          return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+        }
+        
+        if (existingRating) {
+          // Update existing rating
+          existingRating.rating = rating;
+          existingRating.updatedAt = new Date();
+          message = 'Restaurant rating updated successfully';
+        } else {
+          // Add new rating
+          restaurant.userRatings.push({
+            sessionId,
+            rating,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          });
+          message = 'Restaurant rating submitted successfully';
+        }
+        userRating = rating;
+        break;
+
+      case 'remove':
+        if (existingRating) {
+          restaurant.userRatings = restaurant.userRatings.filter(r => r.sessionId !== sessionId);
+          message = 'Restaurant rating removed successfully';
+        } else {
+          return res.status(404).json({ error: 'No restaurant rating found to remove' });
+        }
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    // Recalculate restaurant average rating
+    if (restaurant.userRatings.length > 0) {
+      const total = restaurant.userRatings.reduce((sum, r) => sum + r.rating, 0);
+      restaurant.rating = {
+        average: total / restaurant.userRatings.length,
+        count: restaurant.userRatings.length,
+        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+      };
+      
+      // Update rating distribution
+      restaurant.userRatings.forEach(r => {
+        restaurant.rating.distribution[r.rating]++;
+      });
+    } else {
+      restaurant.rating = {
+        average: 0,
+        count: 0,
+        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+      };
+    }
+
+    await restaurant.save();
+
+    console.log(`🏪 ${message} for ${restaurant.name} by session ${sessionId.substring(0, 8)}...`);
+    
+    res.json({
+      message,
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name,
+        rating: restaurant.rating,
+        userRating: userRating
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to process restaurant rating:', error);
+    res.status(500).json({ error: 'Failed to process restaurant rating', details: error.message });
+  }
+});
+
+// Get user's restaurant rating (public)
+app.get('/api/public/restaurants/:id/user-rating', async (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
+    }
+
+    const restaurant = await Restaurant.findById(req.params.id);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    const userRating = restaurant.userRatings?.find(r => r.sessionId === sessionId);
+
+    res.json({
+      message: 'User restaurant rating retrieved successfully',
+      userRating: userRating ? userRating.rating : null,
+      hasRated: !!userRating
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch user restaurant rating:', error);
+    res.status(500).json({ error: 'Failed to fetch user restaurant rating', details: error.message });
+  }
+});
+
+// Get restaurant with user engagement data (public)
+app.get('/api/public/restaurants/:id/engagement', async (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    
+    const restaurant = await Restaurant.findById(req.params.id)
+      .select('name description logo contact address theme rating userRatings');
+    
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    let userRating = null;
+
+    if (sessionId) {
+      // Get user's restaurant rating
+      const ratingObj = restaurant.userRatings?.find(r => r.sessionId === sessionId);
+      userRating = ratingObj ? ratingObj.rating : null;
+    }
+
+    // Remove user-specific arrays from response for security
+    const restaurantData = restaurant.toObject();
+    delete restaurantData.userRatings;
+
+    res.json({
+      message: 'Restaurant engagement data retrieved successfully',
+      restaurant: {
+        ...restaurantData,
+        userRating: userRating
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurant engagement:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant engagement', details: error.message });
+  }
+});
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -1851,7 +1918,6 @@ app.get('/api/public/restaurants/:id', async (req, res) => {
   }
 });
 
-// Get restaurant menu items (public) - UPDATED with new fields
 // Get restaurant menu items (public) - UPDATED with virtual fields
 app.get('/api/public/restaurants/:id/menu', async (req, res) => {
   try {
@@ -2033,9 +2099,8 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🔐 JWT Secret: ${JWT_SECRET === 'your-fallback-secret-key-change-in-production' ? 'Using fallback - set JWT_SECRET in .env' : 'Using environment variable'}`);
   console.log(`🌐 API available at: http://localhost:${PORT}/api`);
-  console.log(`🖼️ Static images served from: http://localhost:${PORT}/images`);
-  console.log(`📸 Menu item images: restaurantName-itemName-YYYY-MM-DDTHH-MM-SS.ext`);
-  console.log(`🖼️ Restaurant logos: logo-restaurantName-YYYY-MM-DDTHH-MM-SS.ext`);
-  console.log(`⭐ UPDATED: Enhanced engagement system with session tracking!`);
-  console.log(`⭐ Features: User ratings (set/update/remove), Likes, Views with session tracking`);
+  console.log(`☁️  Cloudinary configured for image hosting!`);
+  console.log(`📸 Menu item images stored in: menu-items/ folder`);
+  console.log(`🖼️ Restaurant logos stored in: restaurant-logos/ folder`);
+  console.log(`⭐ Enhanced engagement system with session tracking!`);
 });
