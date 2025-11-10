@@ -64,7 +64,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/orders?status=all`, {
+      const response = await fetch(`http://localhost:5000/api/orders?status=all`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
@@ -124,7 +124,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         order._id === orderId ? { ...order, status: newStatus } : order
       ));
 
-      const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/orders/${orderId}/status`, {
+      const response = await fetch(`http://localhost:5000/api/orders/${orderId}/status`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -180,7 +180,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       setTimeout(() => setRecentlyPaidId(null), 3000);
       
       // Backend update
-      const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/orders/${orderId}/pay`, {
+      const response = await fetch(`http://localhost:5000/api/orders/${orderId}/pay`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -221,7 +221,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         order._id === orderId ? { ...order, paymentStatus: 'pending' } : order
       ));
 
-      const response = await fetch(`https://waiter-backend-j4c4.onrender.com/api/orders/${orderId}/unpay`, {
+      const response = await fetch(`http://localhost:5000/api/orders/${orderId}/unpay`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
@@ -871,7 +871,7 @@ const OrderCard = memo(({
               <div className="flex-shrink-0">
                 {item.menuItem?.image ? (
                   <img
-                    src={`https://waiter-backend-j4c4.onrender.com${item.menuItem.image}`}
+                    src={`${item.menuItem.image}`}
                     alt={item.menuItem.name}
                     className="w-12 h-12 object-cover rounded-lg shadow-md"
                     loading="lazy"

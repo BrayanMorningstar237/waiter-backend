@@ -40,7 +40,7 @@ const Dashboard: React.FC = () => {
     const fetchPendingOrdersCount = async () => {
       try {
         const token = localStorage.getItem('token');
-        const response = await fetch('https://waiter-backend-j4c4.onrender.com/api/orders?status=pending', {
+        const response = await fetch('http://localhost:5000/api/orders?status=pending', {
           headers: { 
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json'
@@ -137,7 +137,7 @@ const Dashboard: React.FC = () => {
           <div className="flex items-center space-x-3">
             {user?.restaurant.logo ? (
               <img
-                src={`https://waiter-backend-j4c4.onrender.com${user.restaurant.logo}`}
+                src={`${user.restaurant.logo}`}
                 alt={user.restaurant.name}
                 className="h-10 w-10 rounded-xl object-cover border-2 border-white shadow-md"
               />
@@ -223,7 +223,7 @@ const Dashboard: React.FC = () => {
               <div className="flex items-center space-x-3">
                 {user?.restaurant.logo ? (
                   <img
-                    src={`https://waiter-backend-j4c4.onrender.com${user.restaurant.logo}`}
+                    src={`http://localhost:5000${user.restaurant.logo}`}
                     alt={user.restaurant.name}
                     className="h-9 w-9 rounded-xl object-cover border-2 border-white shadow-md"
                   />
@@ -325,19 +325,19 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
       
       // Fetch all data in parallel with full URLs like OrderManagement
       const [ordersResponse, menuItemsResponse, tablesResponse] = await Promise.all([
-        fetch('https://waiter-backend-j4c4.onrender.com/api/orders?status=all', {
+        fetch('http://localhost:5000/api/orders?status=all', {
           headers: { 
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         }),
-        fetch('https://waiter-backend-j4c4.onrender.com/api/menu-items', {
+        fetch('http://localhost:5000/api/menu-items', {
           headers: { 
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json'
           }
         }),
-        fetch('https://waiter-backend-j4c4.onrender.com/api/tables', {
+        fetch('http://localhost:5000/api/tables', {
           headers: { 
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json'

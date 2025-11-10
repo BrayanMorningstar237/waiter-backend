@@ -55,7 +55,7 @@ const RestaurantsList: React.FC<RestaurantsListProps> = ({ onRestaurantSelect })
       setError(null);
       console.log('🔄 Fetching restaurants from API...');
       
-      const response = await fetch('https://waiter-backend-j4c4.onrender.com/api/restaurants', {
+      const response = await fetch('http://localhost:5000/api/restaurants', {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -382,7 +382,7 @@ const RestaurantsList: React.FC<RestaurantsListProps> = ({ onRestaurantSelect })
               <div className="relative h-48 bg-gradient-to-br from-gray-100 to-gray-200 overflow-hidden">
                 {restaurant.logo ? (
                   <img
-                    src={`https://waiter-backend-j4c4.onrender.com${restaurant.logo}`}
+                    src={`http://localhost:5000${restaurant.logo}`}
                     alt={restaurant.name}
                     className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                   />

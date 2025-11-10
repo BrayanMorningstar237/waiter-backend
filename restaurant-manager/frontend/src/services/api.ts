@@ -2,7 +2,7 @@
 import axios from 'axios';
 import type { TestResponse, DatabaseTestResponse } from '../types';
 
-const API_URL = 'https://waiter-backend-j4c4.onrender.com/api';
+const API_URL = 'http://localhost:5000/api';
 
 // Create axios instance with authentication interceptor
 const api = axios.create({

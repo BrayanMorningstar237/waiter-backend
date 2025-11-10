@@ -5,7 +5,7 @@ import type { MenuItem, Category, CreateMenuItemData, UpdateMenuItemData, MenuIt
 import { useToast } from '../contexts/ToastContext';
 
 const MenuManagement: React.FC = () => {
-  const { user, restaurant  } = useAuth();
+  const { user, restaurant } = useAuth();
   const { showSuccess, showError } = useToast();
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -19,23 +19,25 @@ const MenuManagement: React.FC = () => {
   const [tempFormData, setTempFormData] = useState<any>(null);
 
   // Memoize data processing
-const processMenuItems = useCallback((rawMenuItems: any[]) => {
-  return rawMenuItems.map((item: any) => ({
-    ...item,
-    id: item.id || item._id, // Handle both id and _id
-    category: item.category?._id ? {
-      id: item.category._id,
-      name: item.category.name
-    } : item.category
-  }));
-}, []);
+  const processMenuItems = useCallback((rawMenuItems: any[]) => {
+    return rawMenuItems.map((item: any) => ({
+      ...item,
+      id: item.id || item._id, // Handle both id and _id
+      category: item.category?._id ? {
+        id: item.category._id,
+        name: item.category.name
+      } : item.category,
+      // Ensure image URL is properly handled for Cloudinary
+      image: item.image?.startsWith('http') ? item.image : undefined
+    }));
+  }, []);
 
   const processCategories = useCallback((rawCategories: any[]) => {
-  return rawCategories.map((category: any) => ({
-    ...category,
-    id: category.id || category._id // Handle both id and _id
-  }));
-}, []);
+    return rawCategories.map((category: any) => ({
+      ...category,
+      id: category.id || category._id // Handle both id and _id
+    }));
+  }, []);
 
   // Optimized data loading with parallel requests and minimal processing
   const loadMenuData = useCallback(async () => {
@@ -100,40 +102,47 @@ const processMenuItems = useCallback((rawMenuItems: any[]) => {
 
   // Optimized item addition - no full reload
   const handleAddItem = useCallback(async (data: CreateMenuItemData, imageFile?: File) => {
-  console.log('🔍 Debug - Restaurant object:', restaurant);
-  
-  // Use restaurant._id (MongoDB) or restaurant.id
-  const restaurantId = restaurant?._id || restaurant?.id;
-  
-  if (!restaurantId) {
-    showError('No restaurant ID found. Please make sure your restaurant profile is properly set up.');
-    console.error('Restaurant ID not found. Restaurant object:', restaurant);
-    return;
-  }
-
-  try {
-    const payload: CreateMenuItemData = {
-      ...data,
-      restaurant: restaurantId, // Use the correct ID
-      isAvailable: true
-    };
-
-    console.log('📦 Payload being sent with restaurant ID:', restaurantId);
-
-    const response = await menuService.createMenuItem(payload, imageFile);
+    console.log('🔍 Debug - Restaurant object:', restaurant);
     
-    // Optimistic update
-    const newItem = processMenuItems([response.menuItem || response.data])[0];
-    setMenuItems(prev => [...prev, newItem]);
+    // Use restaurant._id (MongoDB) or restaurant.id
+    const restaurantId = restaurant?._id || restaurant?.id;
     
-    setShowAddModal(false);
-    setTempFormData(null);
-    showSuccess('Menu item created successfully!');
-  } catch (error: any) {
-    console.error('❌ Create menu item error:', error);
-    showError(`Failed to create menu item: ${error.response?.data?.error || error.message}`);
-  }
-}, [restaurant, showError, showSuccess, processMenuItems]);
+    if (!restaurantId) {
+      showError('No restaurant ID found. Please make sure your restaurant profile is properly set up.');
+      console.error('Restaurant ID not found. Restaurant object:', restaurant);
+      return;
+    }
+
+    try {
+      const payload: CreateMenuItemData = {
+        ...data,
+        restaurant: restaurantId, // Use the correct ID
+        isAvailable: true
+      };
+
+      console.log('📦 Payload being sent with restaurant ID:', restaurantId);
+
+      const response = await menuService.createMenuItem(payload, imageFile);
+      
+      // Optimistic update
+      const newItem = processMenuItems([response.menuItem || response.data])[0];
+      setMenuItems(prev => [...prev, newItem]);
+      
+      setShowAddModal(false);
+      setTempFormData(null);
+      showSuccess('Menu item created successfully!');
+    } catch (error: any) {
+      console.error('❌ Create menu item error:', error);
+      
+      // Enhanced error handling for Cloudinary uploads
+      let errorMessage = error.response?.data?.error || error.message;
+      if (errorMessage.includes('image') || errorMessage.includes('file') || errorMessage.includes('cloudinary')) {
+        errorMessage = `Image upload failed: ${errorMessage}`;
+      }
+      
+      showError(`Failed to create menu item: ${errorMessage}`);
+    }
+  }, [restaurant, showError, showSuccess, processMenuItems]);
 
   // Optimized item editing - no full reload
   const handleEditItem = useCallback(async (id: string, data: Partial<MenuItem>, imageFile?: File) => {
@@ -158,7 +167,12 @@ const processMenuItems = useCallback((rawMenuItems: any[]) => {
       setTempFormData(null);
       showSuccess('Menu item updated successfully!');
     } catch (error: any) {
-      showError(`Failed to update menu item: ${error.response?.data?.error || error.message}`);
+      let errorMessage = error.response?.data?.error || error.message;
+      if (errorMessage.includes('image') || errorMessage.includes('file') || errorMessage.includes('cloudinary')) {
+        errorMessage = `Image upload failed: ${errorMessage}`;
+      }
+      
+      showError(`Failed to update menu item: ${errorMessage}`);
     }
   }, [showError, showSuccess, processMenuItems]);
 
@@ -203,37 +217,38 @@ const processMenuItems = useCallback((rawMenuItems: any[]) => {
   }, [handleEditItem]);
 
   // Optimized category creation - no full reload
-const handleCreateCategory = useCallback(async (categoryName: string) => {
-  const restaurantId = restaurant?._id || restaurant?.id;
-  
-  if (!restaurantId) {
-    showError('No restaurant ID found for category creation.');
-    return;
-  }
-
-  try {
-    const newCategory = {
-      name: categoryName,
-      description: categoryName,
-      restaurant: restaurantId, // Use the correct ID
-      sortOrder: categories.length + 1,
-      isPredefined: false
-    };
-
-    const response = await menuService.createCategory(newCategory);
-    const createdCategory = processCategories([response.category || response.data])[0];
+  const handleCreateCategory = useCallback(async (categoryName: string) => {
+    const restaurantId = restaurant?._id || restaurant?.id;
     
-    // Optimistic update
-    setCategories(prev => [...prev, createdCategory]);
-    
-    showSuccess('Category created successfully!');
-    return createdCategory;
-  } catch (error: any) {
-    showError(`Failed to create category: ${error.response?.data?.error || error.message}`);
-    throw error;
-  }
-}, [restaurant, categories.length, showError, showSuccess, processCategories]);
- // Optimized category deletion - no full reload
+    if (!restaurantId) {
+      showError('No restaurant ID found for category creation.');
+      return;
+    }
+
+    try {
+      const newCategory = {
+        name: categoryName,
+        description: categoryName,
+        restaurant: restaurantId, // Use the correct ID
+        sortOrder: categories.length + 1,
+        isPredefined: false
+      };
+
+      const response = await menuService.createCategory(newCategory);
+      const createdCategory = processCategories([response.category || response.data])[0];
+      
+      // Optimistic update
+      setCategories(prev => [...prev, createdCategory]);
+      
+      showSuccess('Category created successfully!');
+      return createdCategory;
+    } catch (error: any) {
+      showError(`Failed to create category: ${error.response?.data?.error || error.message}`);
+      throw error;
+    }
+  }, [restaurant, categories.length, showError, showSuccess, processCategories]);
+
+  // Optimized category deletion - no full reload
   const handleDeleteCategory = useCallback(async (categoryId: string) => {
     if (!confirm('Are you sure you want to delete this category? Menu items in this category will become uncategorized.')) {
       return;
@@ -437,7 +452,26 @@ interface MenuItemCardProps {
 
 const MenuItemCard: React.FC<MenuItemCardProps> = React.memo(({ item, onEdit, onDelete, onToggleAvailability }) => {
   const [showMore, setShowMore] = React.useState(false);
+  const [imageError, setImageError] = React.useState(false);
   const categoryName = typeof item.category === 'string' ? 'Uncategorized' : item.category?.name || 'Uncategorized';
+
+  // Handle image loading errors
+  const handleImageError = () => {
+    console.warn('🖼️ Image failed to load:', item.image);
+    setImageError(true);
+  };
+
+  // Get proper image URL for Cloudinary
+  const getImageUrl = () => {
+    if (!item.image || imageError) {
+      return null;
+    }
+    
+    // Cloudinary URLs are full URLs, no need to prefix
+    return item.image;
+  };
+
+  const imageUrl = getImageUrl();
 
   return (
     <div className={`bg-white rounded-lg shadow-sm border transition-all duration-300 hover:shadow-md overflow-hidden ${
@@ -446,14 +480,15 @@ const MenuItemCard: React.FC<MenuItemCardProps> = React.memo(({ item, onEdit, on
         : 'border-gray-300 opacity-60'
     } group flex flex-col h-full`}>
       
-      {/* Image Section */}
+      {/* Image Section - UPDATED FOR CLOUDINARY */}
       <div className="relative overflow-hidden aspect-[4/3]">
-        {item.image ? (
+        {imageUrl ? (
           <img
-            src={`https://waiter-backend-j4c4.onrender.com${item.image}`}
+            src={imageUrl}
             alt={item.name}
             className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
             loading="lazy"
+            onError={handleImageError}
           />
         ) : (
           <div className="w-full h-full bg-gradient-to-br from-green-50 to-emerald-50 flex items-center justify-center">
@@ -464,11 +499,11 @@ const MenuItemCard: React.FC<MenuItemCardProps> = React.memo(({ item, onEdit, on
         {/* Availability Toggle - Responsive */}
         <button
           onClick={() => onToggleAvailability(item)}
-          className={` z-20 absolute top-3 right-3 shadow-md backdrop-blur-sm transition-all duration-200 font-medium ${
+          className={`z-20 absolute top-3 right-3 shadow-md backdrop-blur-sm transition-all duration-200 font-medium ${
             item.isAvailable 
-              ? 'bg-green-600 z-20 text-white hover:bg-green-700' 
-              : 'bg-gray-600 z-20 text-white hover:bg-gray-700'
-          } px-3 py-1.5 z-20 rounded-full text-sm sm:inline-flex items-center gap-1.5 hidden`}
+              ? 'bg-green-600 text-white hover:bg-green-700' 
+              : 'bg-gray-600 text-white hover:bg-gray-700'
+          } px-3 py-1.5 rounded-full text-sm sm:inline-flex items-center gap-1.5 hidden`}
           title={item.isAvailable ? 'Click to mark as unavailable' : 'Click to mark as available'}
         >
           <i className={`ri-${item.isAvailable ? 'eye' : 'eye-off'}-line`}></i>
@@ -716,39 +751,39 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (uploading) return;
-  try {
-    setUploading(true);
-    const submitData = {
-      ...formData,
-      price: Number(formData.price),
-      preparationTime: Number(formData.preparationTime),
-      spiceLevel: Number(formData.spiceLevel),
-      ingredients: formData.ingredients.split(',').map((ing: string) => ing.trim()).filter((ing: string) => ing),
-      takeawayPrice: formData.takeawayPrice || formData.price
-    };
-
-    if (item) {
-      const updateData: UpdateMenuItemData = {
-        ...submitData,
-        category: formData.category
+    e.preventDefault();
+    if (uploading) return;
+    try {
+      setUploading(true);
+      const submitData = {
+        ...formData,
+        price: Number(formData.price),
+        preparationTime: Number(formData.preparationTime),
+        spiceLevel: Number(formData.spiceLevel),
+        ingredients: formData.ingredients.split(',').map((ing: string) => ing.trim()).filter((ing: string) => ing),
+        takeawayPrice: formData.takeawayPrice || formData.price
       };
-      onSave(updateData, imageFile || undefined);
-    } else {
-      // Use restaurant._id or restaurant.id
-      const restaurantId = restaurant?._id || restaurant?.id;
-      onSave({
-        ...submitData,
-        restaurant: restaurantId || ''
-      }, imageFile || undefined);
+
+      if (item) {
+        const updateData: UpdateMenuItemData = {
+          ...submitData,
+          category: formData.category
+        };
+        await onSave(updateData, imageFile || undefined);
+      } else {
+        // Use restaurant._id or restaurant.id
+        const restaurantId = restaurant?._id || restaurant?.id;
+        await onSave({
+          ...submitData,
+          restaurant: restaurantId || ''
+        }, imageFile || undefined);
+      }
+    } catch (error) {
+      // Error handling is done in the parent component
+    } finally {
+      setUploading(false);
     }
-  } catch (error) {
-    // Error handling is done in the parent component
-  } finally {
-    setUploading(false);
-  }
-};
+  };
 
   const handleChange = (field: keyof MenuItemFormData, value: any) => {
     setFormData((prev: MenuItemFormData) => ({ ...prev, [field]: value }));
@@ -825,6 +860,9 @@ const MenuItemModal: React.FC<MenuItemModalProps> = ({
                     </label>
                     <p className="text-xs text-gray-500">
                       Recommended: Square image, max 5MB. JPG, PNG, or WebP.
+                    </p>
+                    <p className="text-xs text-green-600">
+                      ☁️ Images will be uploaded to Cloudinary for fast delivery
                     </p>
                   </div>
                 </div>
