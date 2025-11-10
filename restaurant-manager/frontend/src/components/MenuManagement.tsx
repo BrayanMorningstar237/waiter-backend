@@ -1,9 +1,79 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { menuService } from '../services/menu';
 import type { MenuItem, Category, CreateMenuItemData, UpdateMenuItemData, MenuItemFormData } from '../types';
 import { useToast } from '../contexts/ToastContext';
 
+// Menu Management Skeleton Loader
+const MenuManagementSkeleton = () => (
+  <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-white">
+    <div className="max-w-7xl mx-auto px-1 sm:px-6 lg:px-2 space-y-6">
+      
+      {/* Header Skeleton */}
+      <div className="bg-gradient-to-r from-green-600 via-green-500 to-green-600 lg:rounded-2xl rounded-b-2xl sm:rounded-3xl overflow-hidden">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 sm:p-6 lg:p-8">
+          <div className="flex-1 min-w-0">
+            <div className="h-8 w-48 bg-green-400 rounded-lg animate-pulse mb-2"></div>
+            <div className="h-4 w-32 bg-green-300 rounded animate-pulse"></div>
+          </div>
+          <div className="flex gap-2">
+            <div className="w-12 h-12 bg-white/30 rounded-2xl animate-pulse"></div>
+            <div className="w-12 h-12 bg-white rounded-2xl animate-pulse"></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Search & Filter Skeleton */}
+      <div className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-6 lg:p-8 shadow-lg border border-gray-100">
+        <div className="flex gap-4 items-stretch">
+          <div className="flex-1">
+            <div className="h-12 bg-gray-200 rounded-xl animate-pulse"></div>
+          </div>
+          <div className="w-1/3">
+            <div className="h-12 bg-gray-200 rounded-xl animate-pulse"></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Cards Skeleton */}
+      <div className="flex overflow-x-auto gap-3 p-2">
+        {[...Array(4)].map((_, index) => (
+          <div key={index} className="bg-white rounded-xl p-4 shadow-sm border border-gray-200/50 text-center flex-grow flex-shrink-0">
+            <div className="h-6 w-16 bg-gray-200 rounded animate-pulse mx-auto mb-1"></div>
+            <div className="h-4 w-20 bg-gray-200 rounded animate-pulse mx-auto"></div>
+          </div>
+        ))}
+      </div>
+
+      {/* Menu Items Grid Skeleton */}
+      <div className="grid p-4 lg:p-0 grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 sm:gap-6">
+        {[...Array(8)].map((_, index) => (
+          <div key={index} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden animate-pulse">
+            {/* Image Skeleton */}
+            <div className="aspect-[4/3] bg-gray-200"></div>
+            
+            {/* Content Skeleton */}
+            <div className="p-5 space-y-3">
+              <div className="flex justify-between items-start">
+                <div className="h-5 w-32 bg-gray-200 rounded"></div>
+                <div className="h-6 w-16 bg-gray-200 rounded"></div>
+              </div>
+              <div className="h-3 w-20 bg-gray-200 rounded"></div>
+              <div className="space-y-2">
+                <div className="h-3 w-full bg-gray-200 rounded"></div>
+                <div className="h-3 w-3/4 bg-gray-200 rounded"></div>
+              </div>
+              <div className="flex gap-2 pt-3">
+                <div className="h-8 flex-1 bg-gray-200 rounded"></div>
+                <div className="h-8 w-16 bg-gray-200 rounded"></div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
 const MenuManagement: React.FC = () => {
   const { user, restaurant } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -17,17 +87,24 @@ const MenuManagement: React.FC = () => {
   const [showCategoryManagement, setShowCategoryManagement] = useState(false);
   const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
   const [tempFormData, setTempFormData] = useState<any>(null);
+  
+  // Use refs for functions that don't need to trigger re-renders
+  const toastRef = useRef({ showSuccess, showError });
 
-  // Memoize data processing
+  // Update ref when toast functions change
+  useEffect(() => {
+    toastRef.current = { showSuccess, showError };
+  }, [showSuccess, showError]);
+
+  // Static processing functions - no dependencies needed
   const processMenuItems = useCallback((rawMenuItems: any[]) => {
     return rawMenuItems.map((item: any) => ({
       ...item,
-      id: item.id || item._id, // Handle both id and _id
+      id: item.id || item._id,
       category: item.category?._id ? {
         id: item.category._id,
         name: item.category.name
       } : item.category,
-      // Ensure image URL is properly handled for Cloudinary
       image: item.image?.startsWith('http') ? item.image : undefined
     }));
   }, []);
@@ -35,31 +112,28 @@ const MenuManagement: React.FC = () => {
   const processCategories = useCallback((rawCategories: any[]) => {
     return rawCategories.map((category: any) => ({
       ...category,
-      id: category.id || category._id // Handle both id and _id
+      id: category.id || category._id
     }));
   }, []);
 
-  // Optimized data loading with parallel requests and minimal processing
+  // FIXED: Stable loadMenuData with proper dependencies
   const loadMenuData = useCallback(async () => {
     if (!user) {
-      showError('No user found');
+      toastRef.current.showError('No user found');
       return;
     }
     
     try {
       setLoading(true);
       
-      // Parallel API calls for faster loading
       const [menuResponse, categoriesResponse] = await Promise.all([
         menuService.getMenuItems(),
         menuService.getCategories()
       ]);
       
-      // Extract data with fallbacks
       const rawMenuItems = menuResponse?.menuItems || menuResponse?.data?.menuItems || menuResponse?.data || [];
       const rawCategories = categoriesResponse?.categories || categoriesResponse?.data?.categories || categoriesResponse?.data || [];
       
-      // Process data efficiently
       const processedMenuItems = processMenuItems(rawMenuItems);
       const processedCategories = processCategories(rawCategories);
       
@@ -68,18 +142,21 @@ const MenuManagement: React.FC = () => {
       setCategories(processedCategories);
     } catch (error: any) {
       if (error.response?.status === 401) {
-        showError('Authentication failed. Please log in again.');
+        toastRef.current.showError('Authentication failed. Please log in again.');
       } else {
-        showError(`Failed to load menu data: ${error.response?.data?.error || error.message}`);
+        toastRef.current.showError(`Failed to load menu data: ${error.response?.data?.error || error.message}`);
       }
     } finally {
       setLoading(false);
     }
-  }, [user, showError, processMenuItems, processCategories]);
+  }, [user, processMenuItems, processCategories]);
 
+  // FIXED: Load data only when user changes, not on every render
   useEffect(() => {
-    loadMenuData();
-  }, [loadMenuData]);
+    if (user) {
+      loadMenuData();
+    }
+  }, [user]);
 
   // Memoize filtered categories
   const { userCategories, predefinedCategories } = useMemo(() => {
@@ -89,7 +166,7 @@ const MenuManagement: React.FC = () => {
     };
   }, [categories]);
 
-  // Memoize filtered items for better performance
+  // Memoize filtered items
   const filteredItems = useMemo(() => {
     return menuItems.filter(item => {
       const matchesCategory = selectedCategory === 'all' || 
@@ -100,15 +177,14 @@ const MenuManagement: React.FC = () => {
     });
   }, [menuItems, selectedCategory, searchTerm]);
 
-  // Optimized item addition - no full reload
+  // FIXED: Optimized item addition with toast ref
   const handleAddItem = useCallback(async (data: CreateMenuItemData, imageFile?: File) => {
     console.log('🔍 Debug - Restaurant object:', restaurant);
     
-    // Use restaurant._id (MongoDB) or restaurant.id
     const restaurantId = restaurant?._id || restaurant?.id;
     
     if (!restaurantId) {
-      showError('No restaurant ID found. Please make sure your restaurant profile is properly set up.');
+      toastRef.current.showError('No restaurant ID found. Please make sure your restaurant profile is properly set up.');
       console.error('Restaurant ID not found. Restaurant object:', restaurant);
       return;
     }
@@ -116,7 +192,7 @@ const MenuManagement: React.FC = () => {
     try {
       const payload: CreateMenuItemData = {
         ...data,
-        restaurant: restaurantId, // Use the correct ID
+        restaurant: restaurantId,
         isAvailable: true
       };
 
@@ -124,30 +200,29 @@ const MenuManagement: React.FC = () => {
 
       const response = await menuService.createMenuItem(payload, imageFile);
       
-      // Optimistic update
+      // Optimistic update - NO FULL RELOAD
       const newItem = processMenuItems([response.menuItem || response.data])[0];
       setMenuItems(prev => [...prev, newItem]);
       
       setShowAddModal(false);
       setTempFormData(null);
-      showSuccess('Menu item created successfully!');
+      toastRef.current.showSuccess('Menu item created successfully!');
     } catch (error: any) {
       console.error('❌ Create menu item error:', error);
       
-      // Enhanced error handling for Cloudinary uploads
       let errorMessage = error.response?.data?.error || error.message;
       if (errorMessage.includes('image') || errorMessage.includes('file') || errorMessage.includes('cloudinary')) {
         errorMessage = `Image upload failed: ${errorMessage}`;
       }
       
-      showError(`Failed to create menu item: ${errorMessage}`);
+      toastRef.current.showError(`Failed to create menu item: ${errorMessage}`);
     }
-  }, [restaurant, showError, showSuccess, processMenuItems]);
+  }, [restaurant, processMenuItems]);
 
-  // Optimized item editing - no full reload
+  // FIXED: Optimized item editing with toast ref
   const handleEditItem = useCallback(async (id: string, data: Partial<MenuItem>, imageFile?: File) => {
     if (!id || id === 'undefined') {
-      showError('Cannot edit item: ID is missing or invalid');
+      toastRef.current.showError('Cannot edit item: ID is missing or invalid');
       return;
     }
 
@@ -159,27 +234,27 @@ const MenuManagement: React.FC = () => {
 
       const response = await menuService.updateMenuItem(id, updateData, imageFile);
       
-      // Optimistic update - update item in state without full reload
+      // Optimistic update - NO FULL RELOAD
       const updatedItem = processMenuItems([response.menuItem || response.data])[0];
       setMenuItems(prev => prev.map(item => item.id === id ? updatedItem : item));
       
       setEditingItem(null);
       setTempFormData(null);
-      showSuccess('Menu item updated successfully!');
+      toastRef.current.showSuccess('Menu item updated successfully!');
     } catch (error: any) {
       let errorMessage = error.response?.data?.error || error.message;
       if (errorMessage.includes('image') || errorMessage.includes('file') || errorMessage.includes('cloudinary')) {
         errorMessage = `Image upload failed: ${errorMessage}`;
       }
       
-      showError(`Failed to update menu item: ${errorMessage}`);
+      toastRef.current.showError(`Failed to update menu item: ${errorMessage}`);
     }
-  }, [showError, showSuccess, processMenuItems]);
+  }, [processMenuItems]);
 
-  // Optimized item deletion - no full reload
+  // FIXED: Optimized item deletion with toast ref
   const handleDeleteItem = useCallback(async (id: string) => {
     if (!id || id === 'undefined') {
-      showError('Cannot delete item: ID is missing or invalid');
+      toastRef.current.showError('Cannot delete item: ID is missing or invalid');
       return;
     }
 
@@ -188,16 +263,16 @@ const MenuManagement: React.FC = () => {
     try {
       await menuService.deleteMenuItem(id);
       
-      // Optimistic update - remove item from state without full reload
+      // Optimistic update - NO FULL RELOAD
       setMenuItems(prev => prev.filter(item => item.id !== id));
       
-      showSuccess('Menu item deleted successfully!');
+      toastRef.current.showSuccess('Menu item deleted successfully!');
     } catch (error: any) {
-      showError(`Failed to delete menu item: ${error.response?.data?.error || error.message}`);
+      toastRef.current.showError(`Failed to delete menu item: ${error.response?.data?.error || error.message}`);
     }
-  }, [showError, showSuccess]);
+  }, []);
 
-  // Optimized availability toggle
+  // FIXED: Optimized availability toggle
   const toggleAvailability = useCallback(async (item: MenuItem) => {
     if (!item.id) return;
     
@@ -216,12 +291,12 @@ const MenuManagement: React.FC = () => {
     }
   }, [handleEditItem]);
 
-  // Optimized category creation - no full reload
+  // FIXED: Optimized category creation with toast ref
   const handleCreateCategory = useCallback(async (categoryName: string) => {
     const restaurantId = restaurant?._id || restaurant?.id;
     
     if (!restaurantId) {
-      showError('No restaurant ID found for category creation.');
+      toastRef.current.showError('No restaurant ID found for category creation.');
       return;
     }
 
@@ -229,7 +304,7 @@ const MenuManagement: React.FC = () => {
       const newCategory = {
         name: categoryName,
         description: categoryName,
-        restaurant: restaurantId, // Use the correct ID
+        restaurant: restaurantId,
         sortOrder: categories.length + 1,
         isPredefined: false
       };
@@ -237,18 +312,18 @@ const MenuManagement: React.FC = () => {
       const response = await menuService.createCategory(newCategory);
       const createdCategory = processCategories([response.category || response.data])[0];
       
-      // Optimistic update
+      // Optimistic update - NO FULL RELOAD
       setCategories(prev => [...prev, createdCategory]);
       
-      showSuccess('Category created successfully!');
+      toastRef.current.showSuccess('Category created successfully!');
       return createdCategory;
     } catch (error: any) {
-      showError(`Failed to create category: ${error.response?.data?.error || error.message}`);
+      toastRef.current.showError(`Failed to create category: ${error.response?.data?.error || error.message}`);
       throw error;
     }
-  }, [restaurant, categories.length, showError, showSuccess, processCategories]);
+  }, [restaurant, categories.length, processCategories]);
 
-  // Optimized category deletion - no full reload
+  // FIXED: Optimized category deletion with toast ref
   const handleDeleteCategory = useCallback(async (categoryId: string) => {
     if (!confirm('Are you sure you want to delete this category? Menu items in this category will become uncategorized.')) {
       return;
@@ -258,31 +333,24 @@ const MenuManagement: React.FC = () => {
       setDeletingCategoryId(categoryId);
       await menuService.deleteCategory(categoryId);
       
-      // Optimistic update - remove category from state without full reload
+      // Optimistic update - NO FULL RELOAD
       setCategories(prev => prev.filter(cat => cat.id !== categoryId));
       
-      showSuccess('Category deleted successfully!');
+      toastRef.current.showSuccess('Category deleted successfully!');
     } catch (error: any) {
       const errorMessage = error.response?.data?.error || error.message;
       if (error.response?.status === 403) {
-        showError('Cannot delete predefined categories. You can only delete categories you created.');
+        toastRef.current.showError('Cannot delete predefined categories. You can only delete categories you created.');
       } else {
-        showError(`Failed to delete category: ${errorMessage}`);
+        toastRef.current.showError(`Failed to delete category: ${errorMessage}`);
       }
     } finally {
       setDeletingCategoryId(null);
     }
-  }, [showError, showSuccess]);
+  }, []);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-96">
-        <div className="text-center">
-          <i className="ri-loader-4-line text-4xl text-green-500 animate-spin mb-4"></i>
-          <p className="text-gray-600">Loading menu...</p>
-        </div>
-      </div>
-    );
+    if (loading) {
+    return <MenuManagementSkeleton />;
   }
 
   return (

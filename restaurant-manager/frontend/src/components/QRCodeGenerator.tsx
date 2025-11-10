@@ -4,6 +4,104 @@ import { menuService } from '../services/menu';
 import type { MenuItem, Category } from '../types';
 import { useToast } from '../contexts/ToastContext';
 
+// QR Code Generator Skeleton Loader
+const QRCodeGeneratorSkeleton = () => (
+  <div className="min-h-screen bg-gray-50">
+    {/* Top Navigation Header Skeleton */}
+    <div className="sticky top-0 z-40 bg-white border-b border-gray-200 shadow-sm">
+      <div className="px-4 lg:px-8 py-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="h-8 w-48 bg-gray-200 rounded-lg animate-pulse mb-2"></div>
+            <div className="h-4 w-32 bg-gray-200 rounded animate-pulse"></div>
+          </div>
+          <div className="w-10 h-10 lg:w-24 lg:h-10 bg-gray-200 rounded-full lg:rounded-xl animate-pulse"></div>
+        </div>
+        
+        {/* Tabs Skeleton */}
+        <div className="flex gap-2 overflow-x-auto mt-4 pb-1">
+          {[...Array(3)].map((_, index) => (
+            <div
+              key={index}
+              className="w-32 h-12 bg-gray-200 rounded-xl animate-pulse flex-shrink-0"
+            ></div>
+          ))}
+        </div>
+      </div>
+    </div>
+
+    {/* Main Content Skeleton */}
+    <div className="max-w-7xl mx-auto p-4 lg:p-8">
+      <div className="grid lg:grid-cols-1 xl:grid-cols-2 gap-6 lg:gap-8">
+        {/* Left Column - Generator Form Skeleton */}
+        <div className="space-y-6 lg:space-y-8">
+          {/* QR Code Settings Card Skeleton */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+            <div className="h-6 w-48 bg-gray-200 rounded animate-pulse mb-4"></div>
+            
+            <div className="space-y-4">
+              {/* Table Number Input Skeleton */}
+              <div>
+                <div className="h-4 w-32 bg-gray-200 rounded animate-pulse mb-2"></div>
+                <div className="h-12 bg-gray-200 rounded-xl animate-pulse"></div>
+                <div className="h-3 w-48 bg-gray-200 rounded animate-pulse mt-1.5"></div>
+              </div>
+
+              {/* Category/Item Selection Skeleton */}
+              <div>
+                <div className="h-4 w-32 bg-gray-200 rounded animate-pulse mb-2"></div>
+                <div className="h-12 bg-gray-200 rounded-xl animate-pulse"></div>
+              </div>
+
+              {/* Generate Button Skeleton */}
+              <div className="h-14 bg-gray-200 rounded-xl animate-pulse"></div>
+            </div>
+          </div>
+
+          {/* Tips Section Skeleton */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 bg-gray-200 rounded-lg animate-pulse"></div>
+              <div className="flex-1 space-y-2">
+                <div className="h-4 w-32 bg-gray-200 rounded animate-pulse"></div>
+                <div className="space-y-1">
+                  <div className="h-3 w-full bg-gray-200 rounded animate-pulse"></div>
+                  <div className="h-3 w-4/5 bg-gray-200 rounded animate-pulse"></div>
+                  <div className="h-3 w-3/4 bg-gray-200 rounded animate-pulse"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column - Generated QR Codes Skeleton */}
+        <div>
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden h-full">
+            <div className="p-6 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="h-6 w-48 bg-gray-200 rounded animate-pulse mb-1"></div>
+                  <div className="h-4 w-32 bg-gray-200 rounded animate-pulse"></div>
+                </div>
+                <div className="h-4 w-16 bg-gray-200 rounded animate-pulse"></div>
+              </div>
+            </div>
+
+            <div className="p-6">
+              {/* Empty State Skeleton */}
+              <div className="text-center py-12">
+                <div className="w-20 h-20 bg-gray-200 rounded-2xl animate-pulse mx-auto mb-4"></div>
+                <div className="h-4 w-32 bg-gray-200 rounded animate-pulse mx-auto mb-1"></div>
+                <div className="h-3 w-48 bg-gray-200 rounded animate-pulse mx-auto"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 interface QRCodeData {
   type: 'table' | 'category' | 'item';
   id: string;
@@ -242,15 +340,8 @@ const QRCodeGenerator: React.FC = () => {
     showSuccess('QR code deleted');
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600 font-medium">Loading...</p>
-        </div>
-      </div>
-    );
+    if (loading) {
+    return <QRCodeGeneratorSkeleton />;
   }
 
   return (

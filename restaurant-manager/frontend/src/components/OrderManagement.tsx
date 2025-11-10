@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import type { Order, OrderStatus } from '../types';
@@ -29,6 +29,14 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
   const [showRipple, setShowRipple] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
+  // Use refs for toast functions to prevent re-renders
+  const toastRef = useRef({ showSuccess, showError });
+
+  // Update ref when toast functions change
+  useEffect(() => {
+    toastRef.current = { showSuccess, showError };
+  }, [showSuccess, showError]);
+
   // Memoized filtered orders for better performance
   const filteredOrders = useMemo(() => {
     return orders.filter(order => {
@@ -52,10 +60,10 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     [orders]
   );
 
-  // Optimized load function
+  // FIXED: Stable load function with proper dependencies
   const loadOrders = useCallback(async () => {
     if (!user) {
-      showError('No user found');
+      toastRef.current.showError('No user found');
       return;
     }
 
@@ -83,16 +91,19 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     } catch (error: any) {
       if (error.name !== 'AbortError') {
         console.error('❌ Failed to load orders:', error);
-        showError(`Failed to load orders: ${error.message}`);
+        toastRef.current.showError(`Failed to load orders: ${error.message}`);
       }
     } finally {
       setLoading(false);
     }
-  }, [user, showError]);
+  }, [user]);
 
+  // FIXED: Load orders only when user changes
   useEffect(() => {
-    loadOrders();
-  }, [loadOrders]);
+    if (user) {
+      loadOrders();
+    }
+  }, [user]);
 
   // Auto-scroll effect - optimized with dependency array
   useEffect(() => {
@@ -114,9 +125,9 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
 
       return () => clearTimeout(timer);
     }
-  }, [selectedOrderId, autoScroll, filteredOrders.length]); // Only depend on length, not the entire array
+  }, [selectedOrderId, autoScroll, filteredOrders.length]);
 
-  // Optimized status update
+  // FIXED: Optimized status update with toast ref
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus) => {
     try {
       // Optimistic update
@@ -142,7 +153,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         order._id === orderId ? updatedOrder.order : order
       ));
       
-      showSuccess(`Order updated to ${newStatus}`);
+      toastRef.current.showSuccess(`Order updated to ${newStatus}`);
     } catch (error: any) {
       // Revert optimistic update on error
       setOrders(prev => prev.map(order => 
@@ -150,11 +161,11 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       ));
       
       console.error('❌ Failed to update order status:', error);
-      showError(`Failed to update order: ${error.message}`);
+      toastRef.current.showError(`Failed to update order: ${error.message}`);
     }
-  }, [showSuccess, showError, orders]);
+  }, [orders]);
 
-  // Optimized payment actions with better state transitions
+  // FIXED: Optimized payment actions with toast ref
   const markAsPaid = useCallback(async (orderId: string) => {
     try {
       // Optimistic update - immediately move to paid state
@@ -197,7 +208,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         order._id === orderId ? serverUpdatedOrder.order : order
       ));
       
-      showSuccess('Order marked as paid!');
+      toastRef.current.showSuccess('Order marked as paid!');
     } catch (error: any) {
       // Revert optimistic update on error
       setOrders(prev => {
@@ -210,10 +221,11 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       });
       
       console.error('❌ Failed to mark order as paid:', error);
-      showError(`Failed to mark as paid: ${error.message}`);
+      toastRef.current.showError(`Failed to mark as paid: ${error.message}`);
     }
-  }, [showSuccess, showError, orders]);
+  }, [orders]);
 
+  // FIXED: Optimized unpaid action with toast ref
   const markAsUnpaid = useCallback(async (orderId: string) => {
     try {
       // Optimistic update
@@ -238,7 +250,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         order._id === orderId ? updatedOrder.order : order
       ));
       
-      showSuccess('Order marked as unpaid');
+      toastRef.current.showSuccess('Order marked as unpaid');
     } catch (error: any) {
       // Revert optimistic update
       setOrders(prev => prev.map(order => 
@@ -246,40 +258,12 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       ));
       
       console.error('❌ Failed to mark order as unpaid:', error);
-      showError(`Failed to mark as unpaid: ${error.message}`);
+      toastRef.current.showError(`Failed to mark as unpaid: ${error.message}`);
     }
-  }, [showSuccess, showError, orders]);
+  }, [orders]);
 
-  // Stats functions - memoized to prevent unnecessary recalculations
-  const loadStats = useCallback(async (timeRange: string = 'today') => {
-    try {
-      setStatsLoading(true);
-      
-      let statsOrders = orders.filter(o => o.paymentStatus === 'paid');
-      if (timeRange === 'custom' && showCustomDateRange) {
-        const startDate = new Date(customDateRange.start);
-        const endDate = new Date(customDateRange.end);
-        endDate.setHours(23, 59, 59, 999);
-        
-        statsOrders = statsOrders.filter(order => {
-          const orderDate = new Date(order.createdAt);
-          return orderDate >= startDate && orderDate <= endDate;
-        });
-      } else if (timeRange !== 'all') {
-        statsOrders = filterOrdersByTimeRange(statsOrders, timeRange);
-      }
-      
-      const stats = calculateStats(statsOrders);
-      setStatsData(stats);
-    } catch (error: any) {
-      console.error('❌ Failed to load stats:', error);
-      showError(`Failed to load statistics: ${error.message}`);
-    } finally {
-      setStatsLoading(false);
-    }
-  }, [orders, customDateRange, showCustomDateRange, showError]);
-
-  const filterOrdersByTimeRange = (orders: Order[], timeRange: string): Order[] => {
+  // FIXED: Memoized stats functions with stable dependencies
+  const filterOrdersByTimeRange = useCallback((orders: Order[], timeRange: string): Order[] => {
     const now = new Date();
     
     switch (timeRange) {
@@ -301,9 +285,9 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       default:
         return orders;
     }
-  };
+  }, []);
 
-  const calculateStats = (filteredOrders: Order[]) => {
+  const calculateStats = useCallback((filteredOrders: Order[]) => {
     const paidOrders = filteredOrders.filter(order => order.paymentStatus === 'paid');
     const totalRevenue = paidOrders.reduce((sum, order) => sum + order.totalAmount, 0);
     
@@ -342,7 +326,36 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
       timeRangeOrders: filteredOrders.length,
       filteredOrders
     };
-  };
+  }, []);
+
+  // FIXED: Stable loadStats function
+  const loadStats = useCallback(async (timeRange: string = 'today') => {
+    try {
+      setStatsLoading(true);
+      
+      let statsOrders = orders.filter(o => o.paymentStatus === 'paid');
+      if (timeRange === 'custom' && showCustomDateRange) {
+        const startDate = new Date(customDateRange.start);
+        const endDate = new Date(customDateRange.end);
+        endDate.setHours(23, 59, 59, 999);
+        
+        statsOrders = statsOrders.filter(order => {
+          const orderDate = new Date(order.createdAt);
+          return orderDate >= startDate && orderDate <= endDate;
+        });
+      } else if (timeRange !== 'all') {
+        statsOrders = filterOrdersByTimeRange(statsOrders, timeRange);
+      }
+      
+      const stats = calculateStats(statsOrders);
+      setStatsData(stats);
+    } catch (error: any) {
+      console.error('❌ Failed to load stats:', error);
+      toastRef.current.showError(`Failed to load statistics: ${error.message}`);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [orders, customDateRange, showCustomDateRange, filterOrdersByTimeRange, calculateStats]);
 
   const openStatsModal = useCallback(async () => {
     setShowStatsModal(true);

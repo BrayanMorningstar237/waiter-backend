@@ -223,7 +223,7 @@ const Dashboard: React.FC = () => {
               <div className="flex items-center space-x-3">
                 {user?.restaurant.logo ? (
                   <img
-                    src={`http://localhost:5000${user.restaurant.logo}`}
+                    src={`${user.restaurant.logo}`}
                     alt={user.restaurant.name}
                     className="h-9 w-9 rounded-xl object-cover border-2 border-white shadow-md"
                   />
