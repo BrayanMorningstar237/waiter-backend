@@ -33,7 +33,7 @@ interface MenuItem {
     takeawayOrdersCount: number;
   };
   totalTakeawayPrice?: number;
-  isTakeawayAvailable?: boolean; // For backward compatibility
+  isTakeawayAvailable?: boolean;
 }
 
 interface Restaurant {
@@ -66,6 +66,49 @@ interface Category {
   description?: string;
 }
 
+// Order History Interfaces
+interface OrderItem {
+  menuItem: string;
+  name: string;
+  quantity: number;
+  price: number;
+  isTakeaway: boolean;
+  specialInstructions?: string;
+}
+
+interface Order {
+  _id: string;
+  orderNumber: string;
+  restaurant: {
+    _id: string;
+    name: string;
+    logo?: string;
+  };
+  customerName: string;
+  items: OrderItem[];
+  totalAmount: number;
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'completed' | 'cancelled';
+  paymentStatus: 'pending' | 'paid' | 'refunded';
+  orderType: 'dine-in' | 'takeaway';
+  table?: {
+    tableNumber: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+  paidAt?: string;
+  // Add this field to store the actual backend ID
+  backendId?: string;
+}
+
+interface OrderHistoryState {
+  orders: Order[];
+  loading: boolean;
+  filters: {
+    status: string;
+    dateRange: string;
+  };
+}
+
 const CustomerMenu: React.FC = () => {
   const { restaurantId } = useParams<{ restaurantId: string }>();
   const navigate = useNavigate();
@@ -96,34 +139,24 @@ const CustomerMenu: React.FC = () => {
   const [takeawayItemId, setTakeawayItemId] = useState<string | null>(null);
   
   // Restaurant rating state
-
-const [restaurantUserRating, setRestaurantUserRating] = useState(0);
- const [showRestaurantRatingModal, setShowRestaurantRatingModal] = useState(false);
+  const [restaurantUserRating, setRestaurantUserRating] = useState(0);
+  const [showRestaurantRatingModal, setShowRestaurantRatingModal] = useState(false);
   
- // Item refs for scrolling
+  // Item refs for scrolling
   const itemRefs = useRef<{[key: string]: HTMLDivElement | null}>({});
   
-  // Customer info modal state - only name now
+  // Customer info modal state - with name persistence
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [customerName, setCustomerName] = useState('');
-  //Order submission loading state
+  const [showNameEditModal, setShowNameEditModal] = useState(false);
+  const [tempCustomerName, setTempCustomerName] = useState('');
+  
+  // Order submission loading state
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
-  // Load restaurant rating on component mount
-const loadRestaurantRating = async () => {
-  try {
-    const customerId = getCustomerId();
-    const response = await fetch(
-      `http://localhost:5000/api/public/restaurants/${restaurantId}/user-rating?sessionId=${customerId}`
-    );
-    
-    if (response.ok) {
-      const data = await response.json();
-      setRestaurantUserRating(data.userRating || 0);
-    }
-  } catch (error) {
-    console.error('Failed to load restaurant rating:', error);
-  }
-};
+  
+  // Order History state
+  const [showOrderHistory, setShowOrderHistory] = useState(false);
+
   // Custom toast state for CustomerMenu
   const [customerToast, setCustomerToast] = useState<{
     message: string;
@@ -163,6 +196,32 @@ const loadRestaurantRating = async () => {
     return customerId;
   };
 
+  // Load customer name from localStorage
+  const loadCustomerName = () => {
+    try {
+      const customerId = getCustomerId();
+      const customerNameKey = `customer_name_${customerId}`;
+      const savedName = localStorage.getItem(customerNameKey);
+      if (savedName) {
+        setCustomerName(savedName);
+      }
+    } catch (error) {
+      console.error('Failed to load customer name:', error);
+    }
+  };
+
+  // Save customer name to localStorage
+  const saveCustomerName = (name: string) => {
+    try {
+      const customerId = getCustomerId();
+      const customerNameKey = `customer_name_${customerId}`;
+      localStorage.setItem(customerNameKey, name);
+      setCustomerName(name);
+    } catch (error) {
+      console.error('Failed to save customer name:', error);
+    }
+  };
+
   // Load liked items from localStorage
   useEffect(() => {
     const customerId = getCustomerId();
@@ -171,6 +230,9 @@ const loadRestaurantRating = async () => {
     if (savedLikes) {
       setLikedItems(new Set(JSON.parse(savedLikes)));
     }
+    
+    // Load customer name
+    loadCustomerName();
   }, []);
 
   // Save liked items to localStorage
@@ -190,30 +252,44 @@ const loadRestaurantRating = async () => {
     setCustomerToast(null);
   };
 
-  useEffect(() => {
-    if (restaurantId) {
-      loadRestaurantData();
-      loadRestaurantRating();
+  // Move the loadRestaurantRating function definition here
+const loadRestaurantRating = async () => {
+  try {
+    const customerId = getCustomerId();
+    const response = await fetch(
+      `http://localhost:5000/api/public/restaurants/${restaurantId}/user-rating?sessionId=${customerId}`
+    );
+    
+    if (response.ok) {
+      const data = await response.json();
+      setRestaurantUserRating(data.userRating || 0);
     }
-  }, [restaurantId]);
+  } catch (error) {
+    console.error('Failed to load restaurant rating:', error);
+  }
+};
 
+// Then the useEffect
+useEffect(() => {
+  if (restaurantId) {
+    loadRestaurantData();
+    loadRestaurantRating(); // ✅ Now this will work
+  }
+}, [restaurantId]);
 
   // Handle URL parameters for category and item highlighting
   useEffect(() => {
     if (!loading && menuItems.length > 0) {
-      // Set category from URL if present
       if (urlCategory && categories.some(cat => cat._id === urlCategory)) {
         setSelectedCategory(urlCategory);
       }
       
-      // Scroll to item if present in URL
       if (urlItemId && itemRefs.current[urlItemId]) {
         setTimeout(() => {
           itemRefs.current[urlItemId]?.scrollIntoView({ 
             behavior: 'smooth', 
             block: 'center' 
           });
-          // Add highlight animation
           itemRefs.current[urlItemId]?.classList.add('highlight-pulse');
           setTimeout(() => {
             itemRefs.current[urlItemId]?.classList.remove('highlight-pulse');
@@ -222,29 +298,7 @@ const loadRestaurantRating = async () => {
       }
     }
   }, [loading, menuItems, urlCategory, urlItemId, categories]);
-[{
-	"resource": "/c:/Users/ndzod/OneDrive/Desktop/Project waiter 2/waiter/restaurant-manager/frontend/src/components/CustomerMenu.tsx",
-	"owner": "typescript",
-	"code": "2552",
-	"severity": 8,
-	"message": "Cannot find name 'setShowRestaurantRatingModal'. Did you mean 'RestaurantRatingModal'?",
-	"source": "ts",
-	"startLineNumber": 1789,
-	"startColumn": 5,
-	"endLineNumber": 1789,
-	"endColumn": 33,
-	"relatedInformation": [
-		{
-			"startLineNumber": 1006,
-			"startColumn": 7,
-			"endLineNumber": 1006,
-			"endColumn": 28,
-			"message": "'RestaurantRatingModal' is declared here.",
-			"resource": "/c:/Users/ndzod/OneDrive/Desktop/Project waiter 2/waiter/restaurant-manager/frontend/src/components/CustomerMenu.tsx"
-		}
-	],
-	"origin": "extHost1"
-}]
+
   const loadRestaurantData = async () => {
     try {
       setLoading(true);
@@ -273,10 +327,6 @@ const loadRestaurantRating = async () => {
     }
   };
 
- 
-
-  
-
   const filteredItems = menuItems.filter(item => {
     const matchesCategory = selectedCategory === 'all' || item.category._id === selectedCategory;
     const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -285,54 +335,49 @@ const loadRestaurantRating = async () => {
     return matchesCategory && matchesSearch;
   });
 
-  // Get restaurant rating from actual restaurant data instead of menu items
- const getRestaurantRating = () => {
-  return restaurant?.rating?.average || 0;
-};
+  const getRestaurantRating = () => {
+    return restaurant?.rating?.average || 0;
+  };
 
-const averageRestaurantRating = getRestaurantRating();
+  const averageRestaurantRating = getRestaurantRating();
 
   const addToCart = (itemId: string, isTakeaway: boolean = false) => {
-  const item = menuItems.find(mi => mi._id === itemId);
-  
-  // Check if item supports takeaway using the correct property
-  const isTakeawayAvailable = item?.takeaway?.isTakeawayAvailable || item?.isTakeawayAvailable;
-  
-  if (isTakeaway && !isTakeawayAvailable) {
-    showCustomerToast('This item is not available for takeaway', 'warning');
-    return;
-  }
-
-  setCart(prev => {
-    const existing = prev[itemId];
-    if (existing) {
-      return {
-        ...prev,
-        [itemId]: { 
-          quantity: existing.quantity + 1, 
-          isTakeaway: existing.isTakeaway 
-        }
-      };
-    } else {
-      // If item supports takeaway, ask user for preference
-      if (isTakeawayAvailable && !isTakeaway) {
-        setTakeawayItemId(itemId);
-        setShowTakeawayModal(true);
-        return prev; // Don't add yet, wait for user choice
-      }
-      showCustomerToast('Item added to cart!', 'success');
-      return {
-        ...prev,
-        [itemId]: { quantity: 1, isTakeaway }
-        
-      };
+    const item = menuItems.find(mi => mi._id === itemId);
+    
+    const isTakeawayAvailable = item?.takeaway?.isTakeawayAvailable || item?.isTakeawayAvailable;
+    
+    if (isTakeaway && !isTakeawayAvailable) {
+      showCustomerToast('This item is not available for takeaway', 'warning');
+      return;
     }
-  }); 
-  
-  
-  setCartAnimation(true);
-  setTimeout(() => setCartAnimation(false), 600);
-};
+
+    setCart(prev => {
+      const existing = prev[itemId];
+      if (existing) {
+        return {
+          ...prev,
+          [itemId]: { 
+            quantity: existing.quantity + 1, 
+            isTakeaway: existing.isTakeaway 
+          }
+        };
+      } else {
+        if (isTakeawayAvailable && !isTakeaway) {
+          setTakeawayItemId(itemId);
+          setShowTakeawayModal(true);
+          return prev;
+        }
+        showCustomerToast('Item added to cart!', 'success');
+        return {
+          ...prev,
+          [itemId]: { quantity: 1, isTakeaway }
+        };
+      }
+    }); 
+    
+    setCartAnimation(true);
+    setTimeout(() => setCartAnimation(false), 600);
+  };
 
   const removeFromCart = (itemId: string) => {
     setCart(prev => {
@@ -354,8 +399,6 @@ const averageRestaurantRating = getRestaurantRating();
     return cart[itemId]?.quantity || 0;
   };
 
-  
-
   const handleCloseCart = () => {
     setIsClosing(true);
     setTimeout(() => {
@@ -370,51 +413,49 @@ const averageRestaurantRating = getRestaurantRating();
     }
   };
 
-  // Handle like/unlike - Single endpoint version
-const handleLike = async (itemId: string, isLiked: boolean) => {
-  try {
-    const customerId = getCustomerId();
-    const action = isLiked ? 'unlike' : 'like';
-    
-    const response = await fetch(`http://localhost:5000/api/public/menu-items/${itemId}/like`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        sessionId: customerId,
-        action: action
-      })
-    });
+  // Handle like/unlike
+  const handleLike = async (itemId: string, isLiked: boolean) => {
+    try {
+      const customerId = getCustomerId();
+      const action = isLiked ? 'unlike' : 'like';
+      
+      const response = await fetch(`http://localhost:5000/api/public/menu-items/${itemId}/like`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          sessionId: customerId,
+          action: action
+        })
+      });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || `Failed to ${action} item`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Failed to ${action} item`);
+      }
+
+      const data = await response.json();
+      
+      const newLikedItems = new Set(likedItems);
+      if (isLiked) {
+        newLikedItems.delete(itemId);
+      } else {
+        newLikedItems.add(itemId);
+      }
+      setLikedItems(newLikedItems);
+      saveLikedItems(newLikedItems);
+
+      setMenuItems(prev => prev.map(item => 
+        item._id === itemId ? { ...item, likes: data.menuItem.likes } : item
+      ));
+
+      showCustomerToast(isLiked ? 'Removed from favorites' : 'Added to favorites!', 'success');
+    } catch (error: any) {
+      console.error('Like error:', error);
+      showCustomerToast(`Failed to update: ${error.message}`, 'error');
     }
-
-    const data = await response.json();
-    
-    // Update local state
-    const newLikedItems = new Set(likedItems);
-    if (isLiked) {
-      newLikedItems.delete(itemId);
-    } else {
-      newLikedItems.add(itemId);
-    }
-    setLikedItems(newLikedItems);
-    saveLikedItems(newLikedItems);
-
-    // Update menu items with new like count
-    setMenuItems(prev => prev.map(item => 
-      item._id === itemId ? { ...item, likes: data.menuItem.likes } : item
-    ));
-
-    showCustomerToast(isLiked ? 'Removed from favorites' : 'Added to favorites!', 'success');
-  } catch (error: any) {
-    console.error('Like error:', error);
-    showCustomerToast(`Failed to update: ${error.message}`, 'error');
-  }
-};
+  };
 
   // Handle rating click
   const handleRatingClick = (itemId: string) => {
@@ -424,52 +465,50 @@ const handleLike = async (itemId: string, isLiked: boolean) => {
   };
 
   // Submit rating
-// Submit rating
-const handleSubmitRating = async () => {
-  if (!ratingItemId || userRating === 0) return;
+  const handleSubmitRating = async () => {
+    if (!ratingItemId || userRating === 0) return;
 
-  try {
-    const customerId = getCustomerId();
+    try {
+      const customerId = getCustomerId();
 
-    const response = await fetch(`http://localhost:5000/api/public/menu-items/${ratingItemId}/rate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        rating: userRating,
-        sessionId: customerId,
-        action: 'set'
-      })
-    });
+      const response = await fetch(`http://localhost:5000/api/public/menu-items/${ratingItemId}/rate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          rating: userRating,
+          sessionId: customerId,
+          action: 'set'
+        })
+      });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.details || errorData.error || 'Failed to submit rating');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || errorData.error || 'Failed to submit rating');
+      }
+
+      const data = await response.json();
+      
+      setMenuItems(prev => prev.map(item => 
+        item._id === ratingItemId ? { 
+          ...item, 
+          rating: {
+            average: data.menuItem.averageRating,
+            count: data.menuItem.ratingCount
+          }
+        } : item
+      ));
+
+      showCustomerToast('Rating submitted successfully!', 'success');
+      setShowRatingModal(false);
+      setRatingItemId(null);
+      setUserRating(0);
+    } catch (error: any) {
+      console.error('❌ Rating submission error:', error);
+      showCustomerToast(`Failed to submit rating: ${error.message}`, 'error');
     }
-
-    const data = await response.json();
-    
-    // Update menu items with new rating
-    setMenuItems(prev => prev.map(item => 
-      item._id === ratingItemId ? { 
-        ...item, 
-        rating: {
-          average: data.menuItem.averageRating,
-          count: data.menuItem.ratingCount
-        }
-      } : item
-    ));
-
-    showCustomerToast('Rating submitted successfully!', 'success');
-    setShowRatingModal(false);
-    setRatingItemId(null);
-    setUserRating(0);
-  } catch (error: any) {
-    console.error('❌ Rating submission error:', error);
-    showCustomerToast(`Failed to submit rating: ${error.message}`, 'error');
-  }
-};
+  };
 
   // Handle takeaway choice
   const handleTakeawayChoice = (isTakeaway: boolean) => {
@@ -497,139 +536,179 @@ const handleSubmitRating = async () => {
     setShowCustomerModal(true);
   };
 
-  // Handle customer info submission
-  // Handle customer info submission
-// Handle customer info submission with loading state
-const handleCustomerInfoSubmit = async () => {
-  // Prevent multiple submissions
-  if (isSubmittingOrder) {
-    return;
-  }
-
-  if (!customerName.trim()) {
-    showCustomerToast('Please enter your name', 'error');
-    return;
-  }
-
-  // Set loading state
-  setIsSubmittingOrder(true);
-
+  // Save order to history function
+const saveOrderToHistory = (orderData: any) => {
   try {
-    // First, find or create the table
-    let tableId = null;
-    if (tableNumber) {
-      // Try to find existing table
-      const tablesResponse = await fetch(`http://localhost:5000/api/tables?restaurant=${restaurantId}&tableNumber=${tableNumber}`);
-      if (tablesResponse.ok) {
-        const tablesData = await tablesResponse.json();
-        if (tablesData.tables && tablesData.tables.length > 0) {
-          tableId = tablesData.tables[0]._id;
-        } else {
-          // Create new table if doesn't exist
-          const createTableResponse = await fetch('http://localhost:5000/api/tables', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              restaurant: restaurantId,
-              tableNumber: parseInt(tableNumber),
-              capacity: 4, // Default capacity
-              status: 'occupied'
-            })
-          });
-          
-          if (createTableResponse.ok) {
-            const tableData = await createTableResponse.json();
-            tableId = tableData.table._id;
+    const customerId = getCustomerId();
+    const ordersKey = `customer_orders_${customerId}`;
+    
+    const existingOrders = localStorage.getItem(ordersKey);
+    const orders = existingOrders ? JSON.parse(existingOrders) : [];
+    
+    const newOrder = {
+      ...orderData,
+      _id: `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      // Store the actual backend ID for status updates
+      backendId: orderData._id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    orders.unshift(newOrder);
+    localStorage.setItem(ordersKey, JSON.stringify(orders));
+    
+    console.log('✅ Order saved to history:', newOrder.orderNumber);
+  } catch (error) {
+    console.error('❌ Failed to save order to history:', error);
+  }
+};
+  // Handle customer info submission with loading state
+  const handleCustomerInfoSubmit = async () => {
+    if (isSubmittingOrder) {
+      return;
+    }
+
+    if (!customerName.trim()) {
+      showCustomerToast('Please enter your name', 'error');
+      return;
+    }
+
+    setIsSubmittingOrder(true);
+
+    try {
+      let tableId = null;
+      if (tableNumber) {
+        const tablesResponse = await fetch(`http://localhost:5000/api/tables?restaurant=${restaurantId}&tableNumber=${tableNumber}`);
+        if (tablesResponse.ok) {
+          const tablesData = await tablesResponse.json();
+          if (tablesData.tables && tablesData.tables.length > 0) {
+            tableId = tablesData.tables[0]._id;
+          } else {
+            const createTableResponse = await fetch('http://localhost:5000/api/tables', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                restaurant: restaurantId,
+                tableNumber: parseInt(tableNumber),
+                capacity: 4,
+                status: 'occupied'
+              })
+            });
+            
+            if (createTableResponse.ok) {
+              const tableData = await createTableResponse.json();
+              tableId = tableData.table._id;
+            }
           }
         }
       }
-    }
 
-    // Create order with customer info and table
-    const orderData = {
-      restaurant: restaurantId,
-      customerName: customerName.trim(),
-      table: tableId, // Include table reference if available
-      items: Object.entries(cart).map(([itemId, cartItem]) => {
-        const item = menuItems.find(mi => mi._id === itemId);
-        
-        // Calculate price based on takeaway status
-        let price = item?.price || 0;
-        let specialInstructions = "";
-        
-        if (cartItem.isTakeaway && item?.takeaway?.isTakeawayAvailable) {
-          // For takeaway: takeawayPrice + packagingFee PER ITEM
-          const takeawayPrice = item.takeaway.takeawayPrice || item.price;
-          const packagingFee = item.takeaway.packagingFee || 0;
-          price = takeawayPrice + packagingFee;
-          specialInstructions = "Takeaway";
-        }
-        
-        return {
-          menuItem: itemId,
-          quantity: cartItem.quantity,
-          price: price, // This is the unit price including packaging fee for takeaway
-          specialInstructions: specialInstructions
-        };
-      }),
-      totalAmount: Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
-        const item = menuItems.find(mi => mi._id === itemId);
-        let price = item?.price || 0;
-        
-        if (cartItem.isTakeaway && item?.takeaway?.isTakeawayAvailable) {
-          // For takeaway: (takeawayPrice + packagingFee) * quantity
-          const takeawayPrice = item.takeaway.takeawayPrice || item.price;
-          const packagingFee = item.takeaway.packagingFee || 0;
-          price = takeawayPrice + packagingFee;
-        }
-        
-        return sum + (price * cartItem.quantity);
-      }, 0),
-      orderType: tableNumber ? 'dine-in' : 'takeaway'
-    };
+      const orderData = {
+        restaurant: restaurantId,
+        customerName: customerName.trim(),
+        table: tableId,
+        items: Object.entries(cart).map(([itemId, cartItem]) => {
+          const item = menuItems.find(mi => mi._id === itemId);
+          
+          let price = item?.price || 0;
+          let specialInstructions = "";
+          
+          if (cartItem.isTakeaway && item?.takeaway?.isTakeawayAvailable) {
+            const takeawayPrice = item.takeaway.takeawayPrice || item.price;
+            const packagingFee = item.takeaway.packagingFee || 0;
+            price = takeawayPrice + packagingFee;
+            specialInstructions = "Takeaway";
+          }
+          
+          return {
+            menuItem: itemId,
+            quantity: cartItem.quantity,
+            price: price,
+            specialInstructions: specialInstructions
+          };
+        }),
+        totalAmount: Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
+          const item = menuItems.find(mi => mi._id === itemId);
+          let price = item?.price || 0;
+          
+          if (cartItem.isTakeaway && item?.takeaway?.isTakeawayAvailable) {
+            const takeawayPrice = item.takeaway.takeawayPrice || item.price;
+            const packagingFee = item.takeaway.packagingFee || 0;
+            price = takeawayPrice + packagingFee;
+          }
+          
+          return sum + (price * cartItem.quantity);
+        }, 0),
+        orderType: tableNumber ? 'dine-in' : 'takeaway'
+      };
 
-    console.log('📦 Sending order data:', orderData);
+      console.log('📦 Sending order data:', orderData);
 
-    const response = await fetch('http://localhost:5000/api/orders', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(orderData)
-    });
+      const response = await fetch('http://localhost:5000/api/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderData)
+      });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.details || errorData.error || 'Failed to create order');
-    }
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.details || errorData.error || 'Failed to create order');
+      }
 
-    await response.json();
-    
-    // Show success message with order number
-    const tableInfo = tableNumber ? ` for Table ${tableNumber}` : '';
-    showCustomerToast(`Order placed successfully!${tableInfo}`, 'success');
-    
-    // Clear cart and close modals
-    setCart({});
-    setShowCustomerModal(false);
-    setShowCart(false);
-    setCustomerName('');
-    
-  } catch (error: any) {
-    console.error('❌ Order creation error:', error);
-    showCustomerToast(`Failed to place order: ${error.message}`, 'error');
-  } finally {
-    // Reset loading state regardless of success or failure
-    setIsSubmittingOrder(false);
+      const orderResponse = await response.json();
+
+// Save order to history
+saveOrderToHistory({
+  ...orderResponse.order,
+  restaurant: {
+    _id: restaurantId,
+    name: restaurant?.name,
+    logo: restaurant?.logo
   }
-};
+});
+
+      // Save customer name for future orders
+      saveCustomerName(customerName.trim());
+      
+      const tableInfo = tableNumber ? ` for Table ${tableNumber}` : '';
+      showCustomerToast(`Order placed successfully!${tableInfo}`, 'success');
+      
+      setCart({});
+      setShowCustomerModal(false);
+      setShowCart(false);
+      
+    } catch (error: any) {
+      console.error('❌ Order creation error:', error);
+      showCustomerToast(`Failed to place order: ${error.message}`, 'error');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
+  };
 
   // Close customer modal
   const handleCloseCustomerModal = () => {
     setShowCustomerModal(false);
-    setCustomerName('');
+  };
+
+  // Handle name edit
+  const handleEditName = () => {
+    setTempCustomerName(customerName);
+    setShowNameEditModal(true);
+  };
+
+  // Handle save edited name
+  const handleSaveName = () => {
+    if (tempCustomerName.trim()) {
+      saveCustomerName(tempCustomerName.trim());
+      setShowNameEditModal(false);
+      showCustomerToast('Name updated successfully!', 'success');
+    } else {
+      showCustomerToast('Please enter a valid name', 'error');
+    }
   };
 
   if (loading) {
@@ -698,6 +777,14 @@ const handleCustomerInfoSubmit = async () => {
               </div>
             </div>
 
+            {/* Order History Button */}
+            <button
+              onClick={() => setShowOrderHistory(true)}
+              className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all flex-shrink-0 ml-2 sm:ml-3"
+            >
+              <i className="ri-history-line text-xl sm:text-2xl text-gray-700"></i>
+            </button>
+
             {/* Enhanced Cart Button with Animation on Every Add */}
             <button
               onClick={() => setShowCart(true)}
@@ -715,7 +802,6 @@ const handleCustomerInfoSubmit = async () => {
                 </span>
               )}
               
-              {/* Ripple Effect on Every Add */}
               {cartAnimation && (
                 <>
                   <div className="absolute inset-0 rounded-full border-2 border-yellow-400 animate-ping"></div>
@@ -1046,31 +1132,42 @@ const handleCustomerInfoSubmit = async () => {
         </div>
       )}
 
-      {/* Customer Info Modal */ 
-      // In the CustomerMenu component's return statement, update the CustomerInfoModal usage:
-}
+      {/* Customer Info Modal */}
       {showCustomerModal && (
-  <CustomerInfoModal
-    customerName={customerName}
-    onCustomerNameChange={setCustomerName}
-    onSubmit={handleCustomerInfoSubmit}
-    onClose={handleCloseCustomerModal}
-    primaryColor={primaryColor}
-    cartItems={Object.entries(cart).map(([itemId, cartItem]) => {
-      const item = menuItems.find(mi => mi._id === itemId);
-      return item ? { ...item, quantity: cartItem.quantity, isTakeaway: cartItem.isTakeaway } : null;
-    }).filter(Boolean) as (MenuItem & { quantity: number; isTakeaway: boolean })[]}
-    total={Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
-      const item = menuItems.find(mi => mi._id === itemId);
-      const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
-        ? item.totalTakeawayPrice 
-        : item?.price || 0;
-      return sum + (price * cartItem.quantity);
-    }, 0)}
-    tableNumber={tableNumber}
-    isSubmitting={isSubmittingOrder} // Add this prop
-  />
-)}
+        <CustomerInfoModal
+          customerName={customerName}
+          onCustomerNameChange={setCustomerName}
+          onSubmit={handleCustomerInfoSubmit}
+          onClose={handleCloseCustomerModal}
+          onEditName={handleEditName}
+          primaryColor={primaryColor}
+          cartItems={Object.entries(cart).map(([itemId, cartItem]) => {
+            const item = menuItems.find(mi => mi._id === itemId);
+            return item ? { ...item, quantity: cartItem.quantity, isTakeaway: cartItem.isTakeaway } : null;
+          }).filter(Boolean) as (MenuItem & { quantity: number; isTakeaway: boolean })[]}
+          total={Object.entries(cart).reduce((sum, [itemId, cartItem]) => {
+            const item = menuItems.find(mi => mi._id === itemId);
+            const price = cartItem.isTakeaway && item?.totalTakeawayPrice 
+              ? item.totalTakeawayPrice 
+              : item?.price || 0;
+            return sum + (price * cartItem.quantity);
+          }, 0)}
+          tableNumber={tableNumber}
+          isSubmitting={isSubmittingOrder}
+        />
+      )}
+
+      {/* Name Edit Modal */}
+      {showNameEditModal && (
+        <NameEditModal
+          customerName={tempCustomerName}
+          onCustomerNameChange={setTempCustomerName}
+          onSave={handleSaveName}
+          onClose={() => setShowNameEditModal(false)}
+          primaryColor={primaryColor}
+        />
+      )}
+
       {/* Rating Modal */}
       {showRatingModal && (
         <RatingModal
@@ -1089,13 +1186,14 @@ const handleCustomerInfoSubmit = async () => {
       )}
 
       {/* Restaurant Rating Modal */}
-{showRestaurantRatingModal && (
-  <RestaurantRatingModal 
-    onClose={() => setShowRestaurantRatingModal(false)}
-    userRating={restaurantUserRating}
-    onRatingUpdate={(newRating) => setRestaurantUserRating(newRating)}
-  />
-)}
+      {showRestaurantRatingModal && (
+        <RestaurantRatingModal 
+          onClose={() => setShowRestaurantRatingModal(false)}
+          userRating={restaurantUserRating}
+          onRatingUpdate={(newRating) => setRestaurantUserRating(newRating)}
+        />
+      )}
+
       {/* Takeaway Modal */}
       {showTakeawayModal && (
         <TakeawayModal
@@ -1109,6 +1207,661 @@ const handleCustomerInfoSubmit = async () => {
           primaryColor={primaryColor}
         />
       )}
+
+      {/* Order History Modal */}
+      {showOrderHistory && (
+        <OrderHistory
+          primaryColor={primaryColor}
+          onClose={() => setShowOrderHistory(false)}
+        />
+      )}
+    </div>
+  );
+};
+
+// Name Edit Modal Component
+interface NameEditModalProps {
+  customerName: string;
+  onCustomerNameChange: (name: string) => void;
+  onSave: () => void;
+  onClose: () => void;
+  primaryColor: string;
+}
+
+const NameEditModal: React.FC<NameEditModalProps> = ({
+  customerName,
+  onCustomerNameChange,
+  onSave,
+  onClose,
+  primaryColor
+}) => {
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out"
+      onClick={handleBackdropClick}
+    >
+      <div className="bg-white w-full max-w-md overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
+        <div className="p-6 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-gray-900">Edit Your Name</h2>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <i className="ri-close-line text-lg text-gray-700"></i>
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Your Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={customerName}
+                onChange={(e) => onCustomerNameChange(e.target.value)}
+                placeholder="Enter your name"
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm transition-all placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white focus:border-red-300"
+                autoFocus
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="border-t border-gray-100 bg-gray-50 p-6 flex-shrink-0">
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-full font-semibold hover:bg-gray-300 transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onSave}
+              disabled={!customerName.trim()}
+              className="flex-1 text-white py-3 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ backgroundColor: primaryColor }}
+            >
+              Save Name
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Updated CustomerInfoModal with Name Edit Option
+interface CustomerInfoModalProps {
+  customerName: string;
+  onCustomerNameChange: (name: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+  onEditName: () => void;
+  primaryColor: string;
+  cartItems: (MenuItem & { quantity: number; isTakeaway: boolean })[];
+  total: number;
+  tableNumber: string;
+  isSubmitting?: boolean;
+}
+
+const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
+  customerName,
+  onCustomerNameChange,
+  onSubmit,
+  onClose,
+  onEditName,
+  primaryColor,
+  cartItems,
+  total,
+  tableNumber,
+  isSubmitting = false
+}) => {
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget && !isSubmitting) {
+      onClose();
+    }
+  };
+
+  return (
+    <div 
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out"
+      onClick={handleBackdropClick}
+    >
+      <div className="bg-white w-full max-w-md max-h-[90vh] overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
+        <div className="p-6 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-gray-900">
+              {isSubmitting ? 'Placing Order...' : 'Complete Your Order'}
+            </h2>
+            {!isSubmitting && (
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+              >
+                <i className="ri-close-line text-lg text-gray-700"></i>
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6">
+          {/* Order Summary */}
+          <div className="mb-6">
+            <h3 className="font-semibold text-gray-900 mb-3">Order Summary</h3>
+            {tableNumber && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+                <p className="text-blue-800 text-sm font-medium">
+                  Table: {tableNumber}
+                </p>
+              </div>
+            )}
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {cartItems.map(item => {
+                const displayPrice = item.isTakeaway && item.totalTakeawayPrice ? item.totalTakeawayPrice : item.price;
+                return (
+                  <div key={item._id} className="flex justify-between items-center text-sm">
+                    <span className="text-gray-600">
+                      {item.quantity}x {item.name}
+                      {item.isTakeaway && <span className="text-blue-600 ml-1">(Takeaway)</span>}
+                    </span>
+                    <span className="font-medium text-gray-900">
+                      {(displayPrice * item.quantity).toLocaleString()} CFA
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="border-t border-gray-200 mt-3 pt-3">
+              <div className="flex justify-between items-center font-semibold">
+                <span>Total:</span>
+                <span>{total.toLocaleString()} CFA</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Customer Information Form - Only Name */}
+          {!isSubmitting && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-gray-900">Your Information</h3>
+                {customerName && (
+                  <button
+                    onClick={onEditName}
+                    className="text-sm font-medium hover:underline flex items-center gap-1"
+                    style={{ color: primaryColor }}
+                  >
+                    <i className="ri-edit-line text-xs"></i>
+                    Edit
+                  </button>
+                )}
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Your Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => onCustomerNameChange(e.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm transition-all placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white focus:border-red-300"
+                  autoFocus
+                  disabled={isSubmitting}
+                />
+                {customerName && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Your name will be saved for future orders
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Loading State */}
+          {isSubmitting && (
+            <div className="text-center py-8">
+              <div className="inline-block w-12 h-12 border-4 border-gray-200 border-t-red-500 rounded-full animate-spin mb-4"></div>
+              <p className="text-gray-600 font-medium">Processing your order...</p>
+              <p className="text-gray-500 text-sm mt-2">Please wait</p>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-gray-100 bg-gray-50 p-6 flex-shrink-0">
+          <button
+            onClick={onSubmit}
+            disabled={!customerName.trim() || isSubmitting}
+            className="w-full text-white py-4 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed relative"
+            style={{ backgroundColor: primaryColor }}
+          >
+            {isSubmitting ? (
+              <>
+                <div className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                Processing Order...
+              </>
+            ) : (
+              'Confirm Order'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Order History Component
+interface OrderHistoryProps {
+  primaryColor: string;
+  onClose: () => void;
+}
+
+const OrderHistory: React.FC<OrderHistoryProps> = ({ primaryColor, onClose }) => {
+  const [state, setState] = useState<OrderHistoryState>({
+    orders: [],
+    loading: true,
+    filters: {
+      status: 'all',
+      dateRange: 'all'
+    }
+  });
+
+  // Load orders from localStorage on component mount
+  useEffect(() => {
+    loadOrders();
+  }, []);
+
+  const loadOrders = () => {
+    try {
+      const customerId = getCustomerId();
+      const ordersKey = `customer_orders_${customerId}`;
+      const savedOrders = localStorage.getItem(ordersKey);
+      
+      if (savedOrders) {
+        const orders = JSON.parse(savedOrders);
+        setState(prev => ({
+          ...prev,
+          orders: orders.sort((a: Order, b: Order) => 
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          ),
+          loading: false
+        }));
+      } else {
+        setState(prev => ({ ...prev, loading: false }));
+      }
+    } catch (error) {
+      console.error('Failed to load orders:', error);
+      setState(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  const getCustomerId = () => {
+    let customerId = localStorage.getItem('customer_id');
+    if (!customerId) {
+      customerId = `customer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      localStorage.setItem('customer_id', customerId);
+    }
+    return customerId;
+  };
+
+  const updateOrderStatus = async (orderId: string) => {
+  try {
+    const customerId = getCustomerId();
+    const ordersKey = `customer_orders_${customerId}`;
+    const savedOrders = localStorage.getItem(ordersKey);
+    
+    if (!savedOrders) return;
+
+    const orders = JSON.parse(savedOrders);
+    const order = orders.find((o: Order) => o._id === orderId);
+    
+    if (!order) return;
+
+    // If we have a backend ID, use it. Otherwise, try to find by order number.
+    let apiUrl = '';
+    if (order.backendId) {
+      apiUrl = `http://localhost:5000/api/public/orders/${order.backendId}`;
+    } else if (order.orderNumber) {
+      // Try to find by order number as fallback
+      apiUrl = `http://localhost:5000/api/public/orders/by-number/${order.orderNumber}`;
+    } else {
+      console.warn('⚠️ No valid identifier found for order status check');
+      alert('Cannot check status for this order. Please contact the restaurant.');
+      return;
+    }
+
+    const response = await fetch(apiUrl);
+    
+    if (response.ok) {
+      const orderData = await response.json();
+      const updatedOrders = orders.map((o: Order) => 
+        o._id === orderId ? { 
+          ...o, 
+          ...orderData.order,
+          // Ensure we store the backend ID if we didn't have it before
+          backendId: orderData.order._id || o.backendId
+        } : o
+      );
+      
+      localStorage.setItem(ordersKey, JSON.stringify(updatedOrders));
+      loadOrders();
+      console.log('✅ Order status updated successfully');
+    } else if (response.status === 404) {
+      console.warn('⚠️ Order not found on server');
+      alert('Order not found on server. It may have been deleted or there might be a connection issue.');
+    } else {
+      console.error('❌ Server error when fetching order status');
+      alert('Failed to check order status. Please try again later.');
+    }
+  } catch (error) {
+    console.error('❌ Failed to update order status:', error);
+    alert('Network error. Please check your connection and try again.');
+  }
+};
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending': return 'bg-yellow-100 text-yellow-800';
+      case 'confirmed': return 'bg-blue-100 text-blue-800';
+      case 'preparing': return 'bg-orange-100 text-orange-800';
+      case 'ready': return 'bg-green-100 text-green-800';
+      case 'served': return 'bg-green-100 text-green-800';
+      case 'completed': return 'bg-gray-100 text-gray-800';
+      case 'cancelled': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'pending': return 'ri-time-line';
+      case 'confirmed': return 'ri-checkbox-circle-line';
+      case 'preparing': return 'ri-restaurant-line';
+      case 'ready': return 'ri-check-double-line';
+      case 'served': return 'ri-checkbox-circle-line';
+      case 'completed': return 'ri-checkbox-circle-line';
+      case 'cancelled': return 'ri-close-circle-line';
+      default: return 'ri-question-line';
+    }
+  };
+
+  const getPaymentStatusColor = (status: string) => {
+    switch (status) {
+      case 'paid': return 'bg-green-100 text-green-800';
+      case 'pending': return 'bg-yellow-100 text-yellow-800';
+      case 'refunded': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const filterOrders = () => {
+    let filtered = state.orders;
+
+    if (state.filters.status !== 'all') {
+      filtered = filtered.filter(order => order.status === state.filters.status);
+    }
+
+    if (state.filters.dateRange !== 'all') {
+      const now = new Date();
+      const filterDate = new Date();
+
+      switch (state.filters.dateRange) {
+        case 'today':
+          filterDate.setHours(0, 0, 0, 0);
+          filtered = filtered.filter(order => new Date(order.createdAt) >= filterDate);
+          break;
+        case 'week':
+          filterDate.setDate(now.getDate() - 7);
+          filtered = filtered.filter(order => new Date(order.createdAt) >= filterDate);
+          break;
+        case 'month':
+          filterDate.setMonth(now.getMonth() - 1);
+          filtered = filtered.filter(order => new Date(order.createdAt) >= filterDate);
+          break;
+      }
+    }
+
+    return filtered;
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const groupOrdersByDate = (orders: Order[]) => {
+    const groups: { [key: string]: Order[] } = {};
+    
+    orders.forEach(order => {
+      const date = new Date(order.createdAt).toDateString();
+      if (!groups[date]) {
+        groups[date] = [];
+      }
+      groups[date].push(order);
+    });
+    
+    return groups;
+  };
+
+  const filteredOrders = filterOrders();
+  const groupedOrders = groupOrdersByDate(filteredOrders);
+
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
+  if (state.loading) {
+    return (
+      <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out" onClick={handleBackdropClick}>
+        <div className="bg-white w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <div className="inline-block w-12 h-12 border-4 border-gray-200 border-t-red-500 rounded-full animate-spin mb-4"></div>
+              <p className="text-gray-600">Loading your orders...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out" onClick={handleBackdropClick}>
+      <div className="bg-white w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
+        {/* Header */}
+        <div className="p-6 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Order History</h2>
+              <p className="text-gray-500 text-sm mt-1">View and track your orders</p>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
+            >
+              <i className="ri-close-line text-xl text-gray-700"></i>
+            </button>
+          </div>
+
+          {/* Filters */}
+          <div className="flex gap-4 mt-4">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+              <select
+                value={state.filters.status}
+                onChange={(e) => setState(prev => ({
+                  ...prev,
+                  filters: { ...prev.filters, status: e.target.value }
+                }))}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm transition-all focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white"
+              >
+                <option value="all">All Statuses</option>
+                <option value="pending">Pending</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="preparing">Preparing</option>
+                <option value="ready">Ready</option>
+                <option value="served">Served</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+            
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Date Range</label>
+              <select
+                value={state.filters.dateRange}
+                onChange={(e) => setState(prev => ({
+                  ...prev,
+                  filters: { ...prev.filters, dateRange: e.target.value }
+                }))}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm transition-all focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white"
+              >
+                <option value="all">All Time</option>
+                <option value="today">Today</option>
+                <option value="week">Last 7 Days</option>
+                <option value="month">Last 30 Days</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* Orders List */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {filteredOrders.length === 0 ? (
+            <div className="text-center py-12">
+              <i className="ri-shopping-bag-line text-6xl text-gray-300 mb-4"></i>
+              <p className="text-gray-600 font-medium text-lg">No orders found</p>
+              <p className="text-gray-500 text-sm mt-2">
+                {state.orders.length === 0 
+                  ? "You haven't placed any orders yet" 
+                  : "No orders match your current filters"}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {Object.entries(groupedOrders).map(([date, orders]) => (
+                <div key={date} className="space-y-4">
+                  <h3 className="text-lg font-semibold text-gray-900 border-b border-gray-200 pb-2">
+                    {new Date(date).toLocaleDateString('en-US', {
+                      weekday: 'long',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    })}
+                  </h3>
+                  
+                  {orders.map((order) => (
+                    <div key={order._id} className="bg-gray-50 rounded-2xl p-4 border border-gray-200">
+                      {/* Order Header */}
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h4 className="font-semibold text-gray-900">Order #{order.orderNumber}</h4>
+                          <p className="text-sm text-gray-500">{formatDate(order.createdAt)}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
+                            <i className={`${getStatusIcon(order.status)} mr-1`}></i>
+                            {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                          </span>
+                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${getPaymentStatusColor(order.paymentStatus)}`}>
+                            {order.paymentStatus.charAt(0).toUpperCase() + order.paymentStatus.slice(1)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Order Details */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <h5 className="font-medium text-gray-900 mb-2">Items</h5>
+                          <div className="space-y-2">
+                            {order.items.map((item, index) => (
+                              <div key={index} className="flex justify-between text-sm">
+                                <span className="text-gray-600">
+                                  {item.quantity}x {item.name}
+                                  {item.isTakeaway && <span className="text-blue-600 ml-1">(Takeaway)</span>}
+                                </span>
+                                <span className="font-medium text-gray-900">
+                                  {(item.price * item.quantity).toLocaleString()} CFA
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <h5 className="font-medium text-gray-900 mb-2">Order Info</h5>
+                          <div className="space-y-1 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Restaurant:</span>
+                              <span className="font-medium">{order.restaurant.name}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Order Type:</span>
+                              <span className="font-medium capitalize">{order.orderType}</span>
+                            </div>
+                            {order.table && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Table:</span>
+                                <span className="font-medium">#{order.table.tableNumber}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Total:</span>
+                              <span className="font-bold" style={{ color: primaryColor }}>
+                                {order.totalAmount.toLocaleString()} CFA
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-gray-200">
+                        <button
+                          onClick={() => updateOrderStatus(order._id)}
+                          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-full font-medium hover:bg-gray-300 transition-colors text-sm"
+                        >
+                          <i className="ri-refresh-line mr-2"></i>
+                          Check Status
+                        </button>
+                        <button
+                          onClick={() => {
+                            // Add reorder functionality here
+                            console.log('Reorder:', order._id);
+                          }}
+                          className="px-4 py-2 rounded-full font-medium text-white hover:opacity-90 transition-all text-sm"
+                          style={{ backgroundColor: primaryColor }}
+                        >
+                          <i className="ri-shopping-cart-2-line mr-2"></i>
+                          Reorder
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
@@ -1127,12 +1880,11 @@ const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({
 }) => {
   const { restaurantId } = useParams<{ restaurantId: string }>();
   const [restaurant, setRestaurant] = useState<any>(null);
-  const [tempRating, setTempRating] = useState(userRating); // Initialize with user's current rating
+  const [tempRating, setTempRating] = useState(userRating);
   const [loading, setLoading] = useState(false);
 
   const primaryColor = restaurant?.theme?.primaryColor || '#FF6B6B';
 
-  // Get or create customer ID from localStorage
   const getCustomerId = () => {
     let customerId = localStorage.getItem('customer_id');
     if (!customerId) {
@@ -1142,9 +1894,7 @@ const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({
     return customerId;
   };
 
-  // Custom toast function for this component
   const showToast = (message: string, type: 'success' | 'error' | 'warning' | 'info' = 'success') => {
-    // You can implement a toast here or use the existing one
     console.log(`${type}: ${message}`);
   };
 
@@ -1154,7 +1904,6 @@ const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({
     }
   }, [restaurantId]);
 
-  // Update tempRating when userRating prop changes
   useEffect(() => {
     setTempRating(userRating);
   }, [userRating]);
@@ -1199,18 +1948,15 @@ const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({
 
       const data = await response.json();
       
-      // Update the restaurant data with new rating
       setRestaurant((prev: any) => ({
         ...prev,
         rating: data.restaurant.rating
       }));
       
-      // Notify parent component about the rating update
       onRatingUpdate(tempRating);
       
       showToast('Restaurant rating submitted successfully!', 'success');
       
-      // Close modal
       onClose();
       
     } catch (error: any) {
@@ -1324,7 +2070,7 @@ const RestaurantRatingModal: React.FC<RestaurantRatingModalProps> = ({
   );
 };
 
-// ... (keep all the existing component code below - MenuItemCard, CartModalContent, CustomerInfoModal, RatingModal, CustomerMenuToast, TakeawayModal)
+// ... (Keep all the existing component code below - MenuItemCard, CartModalContent, RatingModal, CustomerMenuToast, TakeawayModal)
 
 interface MenuItemCardProps {
   item: MenuItem;
@@ -1349,18 +2095,14 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
   onRate,
   isTakeaway,
 }) => {
-  // Get takeaway availability from the correct property
   const isTakeawayAvailable = item.takeaway?.isTakeawayAvailable || item.isTakeawayAvailable;
   const takeawayPrice = item.takeaway?.takeawayPrice || item.totalTakeawayPrice;
   const displayPrice = isTakeaway && takeawayPrice ? takeawayPrice : item.price;
   
-  // Function to handle add to cart with takeaway check
   const handleAddToCart = () => {
-    // If item supports takeaway and it's the first time adding, show modal for choice
     if (isTakeawayAvailable && quantity === 0) {
-      onAddToCart(); // This will trigger the takeaway modal
+      onAddToCart();
     } else {
-      // For existing items or non-takeaway items, add directly
       onAddToCart();
     }
   };
@@ -1415,7 +2157,6 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
               Vegan
             </span>
           )}
-          {/* Show takeaway badge if item supports takeaway */}
           {isTakeawayAvailable && (
             <span className="bg-blue-500 text-white text-xs px-2 py-1 rounded-full font-semibold shadow-sm">
               Takeaway
@@ -1429,10 +2170,8 @@ const MenuItemCard: React.FC<MenuItemCardProps> = ({
           <h3 className="font-bold text-gray-900 text-base sm:text-lg mb-1 line-clamp-1">{item.name}</h3>
           <p className="text-gray-500 text-xs sm:text-sm leading-relaxed line-clamp-2">{item.description}</p>
           
-          {/* Show takeaway price info if available */}
           {isTakeawayAvailable && takeawayPrice && takeawayPrice !== item.price && (
             <div className="mt-1 text-xs text-blue-600 font-medium">
-              
               Takeaway: {takeawayPrice.toLocaleString()} CFA
             </div>
           )}
@@ -1520,7 +2259,6 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
       const item = menuItems.find(mi => mi._id === itemId);
       if (!item) return null;
       
-      // Calculate display price including packaging fee for takeaway
       let displayPrice = item.price;
       if (cartItem.isTakeaway && item.takeaway?.isTakeawayAvailable) {
         const takeawayPrice = item.takeaway.takeawayPrice || item.price;
@@ -1671,148 +2409,6 @@ const CartModalContent: React.FC<CartModalContentProps> = ({
   );
 };
 
-// Customer Info Modal Component
-interface CustomerInfoModalProps {
-  customerName: string;
-  onCustomerNameChange: (name: string) => void;
-  onSubmit: () => void;
-  onClose: () => void;
-  primaryColor: string;
-  cartItems: (MenuItem & { quantity: number; isTakeaway: boolean })[];
-  total: number;
-  tableNumber: string;
-  isSubmitting?: boolean;
-}
-
-const CustomerInfoModal: React.FC<CustomerInfoModalProps> = ({
-  customerName,
-  onCustomerNameChange,
-  onSubmit,
-  onClose,
-  primaryColor,
-  cartItems,
-  total,
-  tableNumber,
-  isSubmitting = false // Default to false
-}) => {
-  const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget && !isSubmitting) {
-      onClose();
-    }
-  };
-
-  return (
-    <div 
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm transition-all duration-300 ease-out"
-      onClick={handleBackdropClick}
-    >
-      <div className="bg-white w-full max-w-md max-h-[90vh] overflow-hidden shadow-2xl flex flex-col rounded-t-3xl sm:rounded-3xl">
-        <div className="p-6 border-b border-gray-100 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold text-gray-900">
-              {isSubmitting ? 'Placing Order...' : 'Complete Your Order'}
-            </h2>
-            {!isSubmitting && (
-              <button
-                onClick={onClose}
-                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all"
-              >
-                <i className="ri-close-line text-lg text-gray-700"></i>
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
-          {/* Order Summary */}
-          <div className="mb-6">
-            <h3 className="font-semibold text-gray-900 mb-3">Order Summary</h3>
-            {tableNumber && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
-                <p className="text-blue-800 text-sm font-medium">
-                  Table: {tableNumber}
-                </p>
-              </div>
-            )}
-            <div className="space-y-2 max-h-40 overflow-y-auto">
-              {cartItems.map(item => {
-                const displayPrice = item.isTakeaway && item.totalTakeawayPrice ? item.totalTakeawayPrice : item.price;
-                return (
-                  <div key={item._id} className="flex justify-between items-center text-sm">
-                    <span className="text-gray-600">
-                      {item.quantity}x {item.name}
-                      {item.isTakeaway && <span className="text-blue-600 ml-1">(Takeaway)</span>}
-                    </span>
-                    <span className="font-medium text-gray-900">
-                      {(displayPrice * item.quantity).toLocaleString()} CFA
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="border-t border-gray-200 mt-3 pt-3">
-              <div className="flex justify-between items-center font-semibold">
-                <span>Total:</span>
-                <span>{total.toLocaleString()} CFA</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Customer Information Form - Only Name */}
-          {!isSubmitting && (
-            <div className="space-y-4">
-              <h3 className="font-semibold text-gray-900">Your Information</h3>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Your Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={customerName}
-                  onChange={(e) => onCustomerNameChange(e.target.value)}
-                  placeholder="Enter your name"
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl text-sm transition-all placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:bg-white focus:border-red-300"
-                  autoFocus
-                  disabled={isSubmitting}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Loading State */}
-          {isSubmitting && (
-            <div className="text-center py-8">
-              <div className="inline-block w-12 h-12 border-4 border-gray-200 border-t-red-500 rounded-full animate-spin mb-4"></div>
-              <p className="text-gray-600 font-medium">Processing your order...</p>
-              <p className="text-gray-500 text-sm mt-2">Please wait</p>
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-gray-100 bg-gray-50 p-6 flex-shrink-0">
-          <button
-            onClick={onSubmit}
-            disabled={!customerName.trim() || isSubmitting}
-            className="w-full text-white py-4 rounded-full font-semibold hover:opacity-90 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed relative"
-            style={{ backgroundColor: primaryColor }}
-          >
-            {isSubmitting ? (
-              <>
-                <div className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                Processing Order...
-              </>
-            ) : (
-              'Confirm Order'
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-
 // Rating Modal Component
 interface RatingModalProps {
   itemId: string | null;
@@ -1948,12 +2544,10 @@ const CustomerMenuToast: React.FC<CustomerMenuToastProps> = ({
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    // Slide in
     setIsVisible(true);
-    // Slide out after duration
     const timer = setTimeout(() => {
       setIsVisible(false);
-      setTimeout(onClose, 400); // wait for animation to end
+      setTimeout(onClose, 400);
     }, duration);
 
     return () => clearTimeout(timer);
@@ -2020,8 +2614,6 @@ const TakeawayModal: React.FC<TakeawayModalProps> = ({
       onClose();
     }
   };
-
-  
 
   return (
     <div 
