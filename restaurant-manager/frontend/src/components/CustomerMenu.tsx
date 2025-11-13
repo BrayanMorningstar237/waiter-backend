@@ -1046,9 +1046,10 @@ const handleCustomerInfoSubmit = async () => {
         </div>
       )}
 
-      {/* Customer Info Modal */}
+      {/* Customer Info Modal */ 
       // In the CustomerMenu component's return statement, update the CustomerInfoModal usage:
-{showCustomerModal && (
+}
+      {showCustomerModal && (
   <CustomerInfoModal
     customerName={customerName}
     onCustomerNameChange={setCustomerName}

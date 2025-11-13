@@ -8,6 +8,105 @@ interface OrderManagementProps {
   autoScroll?: boolean;
 }
 
+// SSE Hook
+const useSSE = (restaurantId: string | undefined, onNewOrder: (order: Order) => void, onOrderUpdate: (order: Order) => void, onOrderPaid: (order: Order) => void) => {
+  const [isConnected, setIsConnected] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimeout = useRef<number | null>(null);
+  const reconnectAttempts = useRef(0);
+  const maxReconnectAttempts = 5;
+
+  const connectSSE = useCallback(() => {
+    if (!restaurantId) {
+      console.log('❌ No restaurant ID for SSE connection');
+      return;
+    }
+
+    try {
+      console.log(`🔔 Connecting SSE for restaurant: ${restaurantId}`);
+      const eventSource = new EventSource(`http://localhost:5000/api/orders/stream/${restaurantId}`);
+      
+      eventSource.onopen = () => {
+        console.log('✅ SSE connection established');
+        setIsConnected(true);
+        reconnectAttempts.current = 0;
+      };
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('🔔 SSE message received:', data);
+
+          switch (data.type) {
+            case 'connected':
+              console.log('✅ SSE connection confirmed');
+              break;
+            case 'new_order':
+              console.log('🆕 New order via SSE:', data.order.orderNumber);
+              console.log('📦 Full order data:', data.order);
+              onNewOrder(data.order);
+              break;
+            case 'order_updated':
+              console.log('🔄 Order updated via SSE:', data.order.orderNumber);
+              onOrderUpdate(data.order);
+              break;
+            case 'order_paid':
+              console.log('💳 Order paid via SSE:', data.order.orderNumber);
+              onOrderPaid(data.order);
+              break;
+            default:
+              console.log('📨 Unknown SSE message type:', data.type);
+          }
+        } catch (error) {
+          console.error('❌ Failed to parse SSE message:', error);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('❌ SSE error:', error);
+        setIsConnected(false);
+        eventSource.close();
+        
+        // Attempt reconnect after delay
+        if (reconnectAttempts.current < maxReconnectAttempts) {
+          reconnectAttempts.current++;
+          const delay = Math.min(3000 * reconnectAttempts.current, 30000);
+          
+          console.log(`🔄 Attempting SSE reconnect in ${delay}ms... (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
+          
+          reconnectTimeout.current = window.setTimeout(() => {
+            connectSSE();
+          }, delay);
+        } else {
+          console.error('❌ Max SSE reconnection attempts reached');
+        }
+      };
+
+      eventSourceRef.current = eventSource;
+
+    } catch (error) {
+      console.error('❌ Failed to create SSE connection:', error);
+      setIsConnected(false);
+    }
+  }, [restaurantId, onNewOrder, onOrderUpdate, onOrderPaid]);
+
+  useEffect(() => {
+    connectSSE();
+
+    return () => {
+      if (reconnectTimeout.current) {
+        window.clearTimeout(reconnectTimeout.current);
+      }
+      if (eventSourceRef.current) {
+        console.log('🔔 Closing SSE connection');
+        eventSourceRef.current.close();
+      }
+    };
+  }, [connectSSE]);
+
+  return { isConnected };
+};
+
 const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, autoScroll = false }) => {
   const { user } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -28,6 +127,8 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
   const [recentlyPaidId, setRecentlyPaidId] = useState<string | null>(null);
   const [showRipple, setShowRipple] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [unreadOrders, setUnreadOrders] = useState<string[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('connecting');
 
   // Use refs for toast functions to prevent re-renders
   const toastRef = useRef({ showSuccess, showError });
@@ -36,6 +137,58 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
   useEffect(() => {
     toastRef.current = { showSuccess, showError };
   }, [showSuccess, showError]);
+
+  // SSE callbacks
+  const handleNewOrder = useCallback((newOrder: Order) => {
+    setOrders(prev => {
+      // Check if order already exists to avoid duplicates
+      const exists = prev.some(order => order._id === newOrder._id);
+      if (exists) return prev;
+      
+      // Add new order to the beginning of the list
+      return [newOrder, ...prev];
+    });
+    
+    // Show notification
+    toastRef.current.showSuccess(`New order received: ${newOrder.orderNumber}`);
+    
+    // Add to unread orders for highlighting
+    setUnreadOrders(prev => [...prev, newOrder._id]);
+    
+    // Remove from unread after 5 seconds
+    setTimeout(() => {
+      setUnreadOrders(prev => prev.filter(id => id !== newOrder._id));
+    }, 5000);
+  }, []);
+
+  const handleOrderUpdate = useCallback((updatedOrder: Order) => {
+    setOrders(prev => prev.map(order => 
+      order._id === updatedOrder._id ? updatedOrder : order
+    ));
+    
+    toastRef.current.showSuccess(`Order ${updatedOrder.orderNumber} updated to ${updatedOrder.status}`);
+  }, []);
+
+  const handleOrderPaid = useCallback((paidOrder: Order) => {
+    setOrders(prev => prev.map(order => 
+      order._id === paidOrder._id ? paidOrder : order
+    ));
+    
+    toastRef.current.showSuccess(`Order ${paidOrder.orderNumber} marked as paid`);
+  }, []);
+
+  // Use the SSE hook
+  const { isConnected } = useSSE(
+    user?.restaurant?._id,
+    handleNewOrder,
+    handleOrderUpdate,
+    handleOrderPaid
+  );
+
+  // Update connection status
+  useEffect(() => {
+    setConnectionStatus(isConnected ? 'connected' : 'disconnected');
+  }, [isConnected]);
 
   // Memoized filtered orders for better performance
   const filteredOrders = useMemo(() => {
@@ -60,7 +213,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     [orders]
   );
 
-  // FIXED: Stable load function with proper dependencies
+  // Load orders function
   const loadOrders = useCallback(async () => {
     if (!user) {
       toastRef.current.showError('No user found');
@@ -98,14 +251,14 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     }
   }, [user]);
 
-  // FIXED: Load orders only when user changes
+  // Load orders only when user changes
   useEffect(() => {
     if (user) {
       loadOrders();
     }
-  }, [user]);
+  }, [user, loadOrders]);
 
-  // Auto-scroll effect - optimized with dependency array
+  // Auto-scroll effect
   useEffect(() => {
     if (selectedOrderId && autoScroll && filteredOrders.length > 0) {
       const timer = setTimeout(() => {
@@ -127,7 +280,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     }
   }, [selectedOrderId, autoScroll, filteredOrders.length]);
 
-  // FIXED: Optimized status update with toast ref
+  // Status update function
   const updateOrderStatus = useCallback(async (orderId: string, newStatus: OrderStatus) => {
     try {
       // Optimistic update
@@ -165,7 +318,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     }
   }, [orders]);
 
-  // FIXED: Optimized payment actions with toast ref
+  // Payment actions
   const markAsPaid = useCallback(async (orderId: string) => {
     try {
       // Optimistic update - immediately move to paid state
@@ -225,7 +378,6 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     }
   }, [orders]);
 
-  // FIXED: Optimized unpaid action with toast ref
   const markAsUnpaid = useCallback(async (orderId: string) => {
     try {
       // Optimistic update
@@ -262,7 +414,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     }
   }, [orders]);
 
-  // FIXED: Memoized stats functions with stable dependencies
+  // Stats functions
   const filterOrdersByTimeRange = useCallback((orders: Order[], timeRange: string): Order[] => {
     const now = new Date();
     
@@ -328,7 +480,6 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
     };
   }, []);
 
-  // FIXED: Stable loadStats function
   const loadStats = useCallback(async (timeRange: string = 'today') => {
     try {
       setStatsLoading(true);
@@ -396,6 +547,28 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
               <div className="flex items-center gap-2 mb-1">
                 <i className="ri-restaurant-2-line text-green-600 text-xl"></i>
                 <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Orders</h1>
+                <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                  connectionStatus === 'connected' 
+                    ? 'bg-green-100 text-green-700' 
+                    : connectionStatus === 'connecting'
+                    ? 'bg-yellow-100 text-yellow-700'
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  <div className={`w-2 h-2 rounded-full ${
+                    connectionStatus === 'connected' 
+                      ? 'bg-green-500 animate-pulse' 
+                      : connectionStatus === 'connecting'
+                      ? 'bg-yellow-500 animate-pulse'
+                      : 'bg-red-500'
+                  }`}></div>
+                  {connectionStatus === 'connected' ? 'Live' : 
+                   connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+                </div>
+                {unreadOrders.length > 0 && (
+                  <span className="px-2 py-1 bg-red-500 text-white text-xs rounded-full animate-pulse">
+                    {unreadOrders.length} new
+                  </span>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <span className="text-gray-500">{orders.length} total orders</span>
@@ -454,6 +627,7 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
           tableFilter={tableFilter}
           selectedOrderId={selectedOrderId}
           recentlyPaidId={recentlyPaidId}
+          unreadOrders={unreadOrders}
           onUpdateStatus={updateOrderStatus}
           onMarkAsPaid={markAsPaid}
           onMarkAsUnpaid={markAsUnpaid}
@@ -520,12 +694,25 @@ const OrderManagement: React.FC<OrderManagementProps> = ({ selectedOrderId, auto
         .animate-highlight-blue {
           animation: highlight-blue 2s ease-in-out;
         }
+
+        @keyframes new-order-pulse {
+          0%, 100% {
+            background-color: rgb(255 247 237);
+          }
+          50% {
+            background-color: rgb(255 237 213);
+          }
+        }
+        
+        .animate-new-order {
+          animation: new-order-pulse 2s ease-in-out;
+        }
       `}</style>
     </div>
   );
 };
 
-// Memoized Sub-Components to prevent unnecessary re-renders
+// Memoized Sub-Components
 
 const OrderManagementSkeleton = memo(() => (
   <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-white">
@@ -534,7 +721,10 @@ const OrderManagementSkeleton = memo(() => (
       <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-4 sm:p-5">
         <div className="flex items-center justify-between">
           <div className="space-y-2">
-            <div className="h-6 w-48 bg-gray-200 rounded-lg animate-pulse"></div>
+            <div className="flex items-center gap-2">
+              <div className="h-6 w-48 bg-gray-200 rounded-lg animate-pulse"></div>
+              <div className="h-6 w-20 bg-gray-200 rounded-full animate-pulse"></div>
+            </div>
             <div className="h-4 w-32 bg-gray-200 rounded animate-pulse"></div>
           </div>
           <div className="flex space-x-2">
@@ -589,60 +779,68 @@ interface PaymentTabsProps {
   showRipple: boolean;
 }
 
-const PaymentTabs = memo(({ activeTab, setActiveTab, unpaidCount, paidCount, showRipple }: PaymentTabsProps) => (
-  <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-2">
-    <div className="flex gap-2">
-      <button
-        onClick={() => setActiveTab('unpaid')}
-        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 sm:px-4 sm:py-3 
-        rounded-xl font-semibold transition-all text-sm sm:text-base whitespace-nowrap
-        ${activeTab === 'unpaid'
-          ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg scale-[1.02]'
-          : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-        }`}
-      >
-        <i className="ri-time-line"></i>
-        <span>Unpaid</span>
-        {unpaidCount > 0 && (
-          <span className={`px-2 py-0.5 rounded-full text-xs font-bold
-            ${activeTab === 'unpaid'
-              ? 'bg-white text-orange-500'
-              : 'bg-orange-100 text-orange-600'
-            }`}
-          >
-            {unpaidCount}
-          </span>
-        )}
-      </button>
-      
-      <button
-        onClick={() => setActiveTab('paid')}
-        className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 sm:px-4 sm:py-3 
-        rounded-xl font-semibold transition-all text-sm sm:text-base whitespace-nowrap
-        ${activeTab === 'paid'
-          ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg scale-[1.02]'
-          : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
-        }`}
-      >
-        {showRipple && (
-          <span className="absolute inset-0 rounded-xl bg-green-400 animate-ping opacity-75"></span>
-        )}
-        <i className="ri-checkbox-circle-line"></i>
-        <span>Paid</span>
-        {paidCount > 0 && (
-          <span className={`px-2 py-0.5 rounded-full text-xs font-bold
-            ${activeTab === 'paid'
-              ? 'bg-white text-green-500'
-              : 'bg-green-100 text-green-600'
-            }`}
-          >
-            {paidCount}
-          </span>
-        )}
-      </button>
+const PaymentTabs = memo(({ 
+  activeTab, 
+  setActiveTab, 
+  unpaidCount, 
+  paidCount, 
+  showRipple 
+}: PaymentTabsProps) => {
+  return (
+    <div className="bg-white rounded-2xl shadow-md border border-gray-100 p-2">
+      <div className="flex gap-2">
+        <button
+          onClick={() => setActiveTab('unpaid')}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 sm:px-4 sm:py-3 
+          rounded-xl font-semibold transition-all text-sm sm:text-base whitespace-nowrap
+          ${activeTab === 'unpaid'
+            ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg scale-[1.02]'
+            : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+          }`}
+        >
+          <i className="ri-time-line"></i>
+          <span>Unpaid</span>
+          {unpaidCount > 0 && (
+            <span className={`px-2 py-0.5 rounded-full text-xs font-bold
+              ${activeTab === 'unpaid'
+                ? 'bg-white text-orange-500'
+                : 'bg-orange-100 text-orange-600'
+              }`}
+            >
+              {unpaidCount}
+            </span>
+          )}
+        </button>
+        
+        <button
+          onClick={() => setActiveTab('paid')}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 sm:px-4 sm:py-3 
+          rounded-xl font-semibold transition-all text-sm sm:text-base whitespace-nowrap relative
+          ${activeTab === 'paid'
+            ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg scale-[1.02]'
+            : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+          }`}
+        >
+          {showRipple && (
+            <span className="absolute inset-0 rounded-xl bg-green-400 animate-ping opacity-75"></span>
+          )}
+          <i className="ri-checkbox-circle-line"></i>
+          <span>Paid</span>
+          {paidCount > 0 && (
+            <span className={`px-2 py-0.5 rounded-full text-xs font-bold
+              ${activeTab === 'paid'
+                ? 'bg-white text-green-500'
+                : 'bg-green-100 text-green-600'
+              }`}
+            >
+              {paidCount}
+            </span>
+          )}
+        </button>
+      </div>
     </div>
-  </div>
-));
+  );
+});
 
 interface OrderFiltersProps {
   selectedStatus: string;
@@ -693,6 +891,7 @@ interface OrdersGridProps {
   tableFilter: string;
   selectedOrderId?: string | null;
   recentlyPaidId: string | null;
+  unreadOrders: string[];
   onUpdateStatus: (orderId: string, newStatus: OrderStatus) => void;
   onMarkAsPaid: (orderId: string) => void;
   onMarkAsUnpaid: (orderId: string) => void;
@@ -705,6 +904,7 @@ const OrdersGrid = memo(({
   tableFilter, 
   selectedOrderId, 
   recentlyPaidId, 
+  unreadOrders,
   onUpdateStatus, 
   onMarkAsPaid, 
   onMarkAsUnpaid 
@@ -737,6 +937,7 @@ const OrdersGrid = memo(({
           onMarkAsUnpaid={onMarkAsUnpaid}
           isRecentlyPaid={order._id === recentlyPaidId}
           isSelected={order._id === selectedOrderId}
+          isUnread={unreadOrders.includes(order._id)}
           animationDelay={index * 50}
         />
       ))}
@@ -752,6 +953,7 @@ interface OrderCardProps {
   onMarkAsUnpaid: (orderId: string) => void;
   isRecentlyPaid?: boolean;
   isSelected?: boolean;
+  isUnread?: boolean;
   animationDelay?: number;
 }
 
@@ -762,6 +964,7 @@ const OrderCard = memo(({
   onMarkAsUnpaid,
   isRecentlyPaid = false,
   isSelected = false,
+  isUnread = false,
   animationDelay = 0
 }: OrderCardProps) => {
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus>(order.status);
@@ -818,21 +1021,37 @@ const OrderCard = memo(({
           ? 'border-green-400 bg-gradient-to-br from-green-50 to-emerald-50 animate-pulse-green' 
           : isSelected
           ? 'border-blue-400 bg-gradient-to-br from-blue-50 to-blue-100 animate-highlight-blue'
+          : isUnread
+          ? 'border-orange-400 bg-gradient-to-br from-orange-50 to-yellow-50 animate-new-order shadow-lg'
           : 'border-gray-100 hover:shadow-lg hover:border-gray-200'
       }`}
       style={{ animationDelay: `${animationDelay}ms` }}
     >
       
       {/* Status Badges */}
-      {(isRecentlyPaid || isSelected) && (
+      {(isRecentlyPaid || isSelected || isUnread) && (
         <div className={`px-4 py-2 flex items-center justify-center space-x-2 text-sm font-bold ${
           isRecentlyPaid 
             ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white' 
-            : 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
+            : isSelected
+            ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white'
+            : 'bg-gradient-to-r from-orange-500 to-yellow-500 text-white'
         }`}>
-          <i className={`${isRecentlyPaid ? 'ri-checkbox-circle-fill animate-bounce' : 'ri-arrow-right-line animate-pulse'}`}></i>
-          <span>{isRecentlyPaid ? 'Just Paid!' : 'Selected Order'}</span>
-          <i className={`${isRecentlyPaid ? 'ri-checkbox-circle-fill animate-bounce' : 'ri-arrow-left-line animate-pulse'}`}></i>
+          <i className={`${
+            isRecentlyPaid ? 'ri-checkbox-circle-fill animate-bounce' : 
+            isSelected ? 'ri-arrow-right-line animate-pulse' :
+            'ri-notification-3-fill animate-pulse'
+          }`}></i>
+          <span>{
+            isRecentlyPaid ? 'Just Paid!' : 
+            isSelected ? 'Selected Order' :
+            'New Order!'
+          }</span>
+          <i className={`${
+            isRecentlyPaid ? 'ri-checkbox-circle-fill animate-bounce' : 
+            isSelected ? 'ri-arrow-left-line animate-pulse' :
+            'ri-notification-3-fill animate-pulse'
+          }`}></i>
         </div>
       )}
 
