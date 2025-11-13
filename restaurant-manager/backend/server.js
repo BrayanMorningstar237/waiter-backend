@@ -18,6 +18,31 @@ const Category = require('./models/Category');
 const MenuItem = require('./models/MenuItem');
 const Table = require('./models/Table');
 
+// Simple in-memory store for SSE connections
+const sseConnections = new Map();
+
+// Helper function to send notifications via SSE
+function notifyRestaurant(restaurantId, data) {
+  if (!sseConnections.has(restaurantId)) {
+    console.log(`❌ No SSE connections for restaurant: ${restaurantId}`);
+    return;
+  }
+
+  const connections = sseConnections.get(restaurantId);
+  let delivered = 0;
+  
+  connections.forEach(res => {
+    try {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      delivered++;
+    } catch (error) {
+      console.error('❌ Failed to send SSE notification:', error);
+    }
+  });
+  
+  console.log(`📢 Notified ${delivered} clients for restaurant ${restaurantId}`);
+}
+
 // Configure Cloudinary storage for menu items
 const menuItemStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
@@ -164,7 +189,122 @@ const { auth } = require('./middleware/auth');
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 
-// Test Routes
+// ============================================================================
+// SSE ENDPOINTS
+// ============================================================================
+
+// SSE endpoint for order notifications
+app.get('/api/orders/stream/:restaurantId', (req, res) => {
+  const { restaurantId } = req.params;
+  
+  console.log(`🔔 New SSE connection for restaurant: ${restaurantId}`);
+  
+  // Set headers for SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  // Send initial connection event
+  res.write(`data: ${JSON.stringify({
+    type: 'connected',
+    message: 'SSE connection established',
+    timestamp: new Date().toISOString()
+  })}\n\n`);
+
+  // Store the connection
+  if (!sseConnections.has(restaurantId)) {
+    sseConnections.set(restaurantId, new Set());
+  }
+  sseConnections.get(restaurantId).add(res);
+
+  // Remove connection when client closes
+  req.on('close', () => {
+    console.log(`🔔 SSE connection closed for restaurant: ${restaurantId}`);
+    if (sseConnections.has(restaurantId)) {
+      sseConnections.get(restaurantId).delete(res);
+      if (sseConnections.get(restaurantId).size === 0) {
+        sseConnections.delete(restaurantId);
+      }
+    }
+  });
+});
+
+// Debug endpoint for SSE connections
+app.get('/api/sse-debug', (req, res) => {
+  const debugInfo = {
+    totalConnections: 0,
+    restaurants: {}
+  };
+
+  sseConnections.forEach((connections, restaurantId) => {
+    debugInfo.restaurants[restaurantId] = connections.size;
+    debugInfo.totalConnections += connections.size;
+  });
+
+  res.json(debugInfo);
+});
+
+// Test SSE notification endpoint
+app.post('/api/test-sse/:restaurantId', async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    const { type = 'new_order' } = req.body;
+    
+    console.log(`🧪 Testing SSE for restaurant: ${restaurantId}`);
+    
+    // Create a test order
+    const testOrder = {
+      _id: 'test_' + Date.now(),
+      orderNumber: 'TEST-' + Date.now(),
+      restaurant: restaurantId,
+      customerName: 'Test Customer',
+      items: [
+        {
+          menuItem: {
+            name: 'Test Item',
+            price: 1000
+          },
+          quantity: 1,
+          price: 1000
+        }
+      ],
+      totalAmount: 1000,
+      status: 'pending',
+      paymentStatus: 'pending',
+      orderType: 'dine-in',
+      createdAt: new Date().toISOString()
+    };
+    
+    notifyRestaurant(restaurantId, {
+      type: type,
+      order: testOrder,
+      message: `Test ${type} notification`,
+      timestamp: new Date().toISOString()
+    });
+    
+    const clientCount = sseConnections.has(restaurantId) ? sseConnections.get(restaurantId).size : 0;
+    
+    res.json({
+      message: `SSE test notification sent (${type})`,
+      restaurantId,
+      clientsConnected: clientCount,
+      testOrder: testOrder.orderNumber,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ SSE test failed:', error);
+    res.status(500).json({ error: 'SSE test failed', details: error.message });
+  }
+});
+
+// ============================================================================
+// TEST ROUTES
+// ============================================================================
+
 app.get('/api/test', (req, res) => {
   res.json({ message: 'Backend is working!' });
 });
@@ -232,7 +372,7 @@ app.put('/api/restaurants/current', auth, async (req, res) => {
   }
 });
 
-// Update restaurant logo (protected) - UPDATED FOR CLOUDINARY
+// Update restaurant logo (protected)
 app.put('/api/restaurants/current/logo', auth, logoUpload.single('logo'), async (req, res) => {
   try {
     if (!req.file) {
@@ -250,7 +390,7 @@ app.put('/api/restaurants/current/logo', auth, logoUpload.single('logo'), async 
 
     const restaurant = await Restaurant.findByIdAndUpdate(
       req.user.restaurant._id,
-      { logo: req.file.path }, // Cloudinary URL
+      { logo: req.file.path },
       { new: true }
     );
 
@@ -373,7 +513,7 @@ app.get('/api/restaurants/:id', async (req, res) => {
 });
 
 // ============================================================================
-// MENU ITEMS ROUTES - UPDATED FOR CLOUDINARY
+// MENU ITEMS ROUTES
 // ============================================================================
 
 app.get('/api/menu-items', auth, async (req, res) => {
@@ -404,7 +544,7 @@ app.get('/api/menu-items', auth, async (req, res) => {
   }
 });
 
-// Update menu item (protected) - UPDATED FOR CLOUDINARY
+// Update menu item (protected)
 app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
     const existingItem = await MenuItem.findById(req.params.id);
@@ -428,7 +568,6 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
       isVegan: req.body.isVegan ? req.body.isVegan === 'true' : undefined,
       isGlutenFree: req.body.isGlutenFree ? req.body.isGlutenFree === 'true' : undefined,
       isAvailable: req.body.isAvailable ? req.body.isAvailable === 'true' : undefined,
-      // Handle new fields
       'nutrition.calories': req.body.calories ? Number(req.body.calories) : undefined,
       'nutrition.protein': req.body.protein ? Number(req.body.protein) : undefined,
       'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : undefined,
@@ -447,7 +586,7 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
         await deleteCloudinaryImage(existingItem.image);
       }
       
-      updateData.image = req.file.path; // Cloudinary URL
+      updateData.image = req.file.path;
       console.log('📸 New image uploaded to Cloudinary:', req.file.path);
     }
 
@@ -473,30 +612,11 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
   }
 });
 
-// Create menu item (protected) - UPDATED FOR CLOUDINARY
-// Create menu item (protected) - UPDATED FOR CLOUDINARY
+// Create menu item (protected)
 app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
     console.log('📦 Creating menu item with data:', req.body);
     console.log('🏪 Restaurant:', req.user.restaurant.name);
-    
-    // ADD THESE DEBUG LOGS:
-    console.log('🔍 DEBUG - Files received:', req.file);
-    console.log('🔍 DEBUG - Request body:', req.body);
-    console.log('🔍 DEBUG - Headers:', req.headers['content-type']);
-    
-    if (req.file) {
-      console.log('✅ File received successfully:', {
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        size: req.file.size,
-        path: req.file.path,
-        filename: req.file.filename
-      });
-    } else {
-      console.log('❌ No file received in req.file');
-      console.log('🔍 Available request properties:', Object.keys(req));
-    }
 
     const menuItemData = {
       ...req.body,
@@ -509,7 +629,6 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
       isVegan: req.body.isVegan === 'true',
       isGlutenFree: req.body.isGlutenFree === 'true',
       isAvailable: req.body.isAvailable === 'true',
-      // Handle new fields
       'nutrition.calories': req.body.calories ? Number(req.body.calories) : 0,
       'nutrition.protein': req.body.protein ? Number(req.body.protein) : 0,
       'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : 0,
@@ -523,7 +642,7 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
     };
 
     if (req.file) {
-      menuItemData.image = req.file.path; // Cloudinary URL
+      menuItemData.image = req.file.path;
       console.log('📸 Image uploaded to Cloudinary:', req.file.path);
     } else {
       console.log('⚠️ No image file attached to request');
@@ -537,7 +656,6 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
       .populate('restaurant', 'name');
 
     console.log('✅ Menu item created successfully:', populatedItem.name);
-    console.log('🖼️ Final image URL:', populatedItem.image);
     
     res.status(201).json({
       message: 'Menu item created successfully',
@@ -549,7 +667,7 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
   }
 });
 
-// Delete menu item (protected) - UPDATED FOR CLOUDINARY
+// Delete menu item (protected)
 app.delete('/api/menu-items/:id', auth, async (req, res) => {
   try {
     const existingItem = await MenuItem.findById(req.params.id);
@@ -583,376 +701,6 @@ app.delete('/api/menu-items/:id', auth, async (req, res) => {
   } catch (error) {
     console.error('❌ Failed to delete menu item:', error);
     res.status(500).json({ error: 'Failed to delete menu item', details: error.message });
-  }
-});
-
-// ============================================================================
-// UPDATED MENU ITEM ENGAGEMENT ROUTES WITH SESSION TRACKING
-// ============================================================================
-
-// Rate/Update/Remove rating (public)
-app.post('/api/public/menu-items/:id/rate', async (req, res) => {
-  try {
-    const { rating, sessionId, action = 'set' } = req.body;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
-    }
-
-    const menuItem = await MenuItem.findById(req.params.id);
-    if (!menuItem) {
-      return res.status(404).json({ error: 'Menu item not found' });
-    }
-
-    let userRating = null;
-    let message = '';
-
-    // Check if user already rated this item
-    const existingRating = menuItem.userRatings?.find(r => r.sessionId === sessionId);
-
-    switch (action) {
-      case 'set':
-        if (!rating || rating < 1 || rating > 5) {
-          return res.status(400).json({ error: 'Rating must be between 1 and 5' });
-        }
-        
-        if (existingRating) {
-          // Update existing rating
-          const oldRating = existingRating.rating;
-          existingRating.rating = rating;
-          existingRating.updatedAt = new Date();
-          message = 'Rating updated successfully';
-        } else {
-          // Add new rating
-          if (!menuItem.userRatings) menuItem.userRatings = [];
-          menuItem.userRatings.push({
-            sessionId,
-            rating,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          });
-          message = 'Rating submitted successfully';
-        }
-        userRating = rating;
-        break;
-
-      case 'remove':
-        if (existingRating) {
-          menuItem.userRatings = menuItem.userRatings.filter(r => r.sessionId !== sessionId);
-          message = 'Rating removed successfully';
-        } else {
-          return res.status(404).json({ error: 'No rating found to remove' });
-        }
-        break;
-
-      default:
-        return res.status(400).json({ error: 'Invalid action' });
-    }
-
-    // Recalculate average rating
-    if (menuItem.userRatings && menuItem.userRatings.length > 0) {
-      const total = menuItem.userRatings.reduce((sum, r) => sum + r.rating, 0);
-      menuItem.rating.average = total / menuItem.userRatings.length;
-      menuItem.rating.count = menuItem.userRatings.length;
-      
-      // Update rating distribution
-      menuItem.rating.distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-      menuItem.userRatings.forEach(r => {
-        menuItem.rating.distribution[r.rating]++;
-      });
-    } else {
-      menuItem.rating.average = 0;
-      menuItem.rating.count = 0;
-      menuItem.rating.distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    }
-
-    await menuItem.save();
-
-    console.log(`⭐ ${message} for ${menuItem.name} by session ${sessionId.substring(0, 8)}...`);
-    
-    res.json({
-      message,
-      menuItem: {
-        id: menuItem._id,
-        name: menuItem.name,
-        averageRating: menuItem.rating.average,
-        ratingCount: menuItem.rating.count,
-        userRating: userRating,
-        ratingDistribution: menuItem.rating.distribution
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to process rating:', error);
-    res.status(500).json({ error: 'Failed to process rating', details: error.message });
-  }
-});
-
-// Get user's rating for a menu item (public)
-app.get('/api/public/menu-items/:id/user-rating', async (req, res) => {
-  try {
-    const { sessionId } = req.query;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
-    }
-
-    const menuItem = await MenuItem.findById(req.params.id);
-    if (!menuItem) {
-      return res.status(404).json({ error: 'Menu item not found' });
-    }
-
-    const userRating = menuItem.userRatings?.find(r => r.sessionId === sessionId);
-
-    res.json({
-      message: 'User rating retrieved successfully',
-      userRating: userRating ? userRating.rating : null,
-      hasRated: !!userRating
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch user rating:', error);
-    res.status(500).json({ error: 'Failed to fetch user rating', details: error.message });
-  }
-});
-
-// Like/Unlike a menu item (public)
-app.post('/api/public/menu-items/:id/like', async (req, res) => {
-  try {
-    const { sessionId, action = 'toggle' } = req.body;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
-    }
-
-    const menuItem = await MenuItem.findById(req.params.id);
-    if (!menuItem) {
-      return res.status(404).json({ error: 'Menu item not found' });
-    }
-
-    // Initialize userLikes array if it doesn't exist
-    if (!menuItem.userLikes) menuItem.userLikes = [];
-
-    const hasLiked = menuItem.userLikes.includes(sessionId);
-    let message = '';
-    let newLikeStatus = false;
-
-    if (action === 'toggle') {
-      if (hasLiked) {
-        // Unlike
-        menuItem.userLikes = menuItem.userLikes.filter(id => id !== sessionId);
-        menuItem.likes = Math.max(0, menuItem.likes - 1);
-        message = 'Item unliked successfully';
-        newLikeStatus = false;
-      } else {
-        // Like
-        menuItem.userLikes.push(sessionId);
-        menuItem.likes += 1;
-        message = 'Item liked successfully';
-        newLikeStatus = true;
-      }
-    } else if (action === 'like' && !hasLiked) {
-      menuItem.userLikes.push(sessionId);
-      menuItem.likes += 1;
-      message = 'Item liked successfully';
-      newLikeStatus = true;
-    } else if (action === 'unlike' && hasLiked) {
-      menuItem.userLikes = menuItem.userLikes.filter(id => id !== sessionId);
-      menuItem.likes = Math.max(0, menuItem.likes - 1);
-      message = 'Item unliked successfully';
-      newLikeStatus = false;
-    } else {
-      message = 'No change made';
-      newLikeStatus = hasLiked;
-    }
-
-    // Update popularity score
-    menuItem.popularity = menuItem.calculatePopularity();
-    
-    await menuItem.save();
-
-    console.log(`❤️ ${message} for ${menuItem.name} by session ${sessionId.substring(0, 8)}..., total likes: ${menuItem.likes}`);
-    
-    res.json({
-      message,
-      menuItem: {
-        id: menuItem._id,
-        name: menuItem.name,
-        likes: menuItem.likes,
-        userHasLiked: newLikeStatus
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to process like:', error);
-    res.status(500).json({ error: 'Failed to process like', details: error.message });
-  }
-});
-
-// Check if user has liked a menu item (public)
-app.get('/api/public/menu-items/:id/user-like', async (req, res) => {
-  try {
-    const { sessionId } = req.query;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
-    }
-
-    const menuItem = await MenuItem.findById(req.params.id);
-    if (!menuItem) {
-      return res.status(404).json({ error: 'Menu item not found' });
-    }
-
-    const hasLiked = menuItem.userLikes?.includes(sessionId) || false;
-
-    res.json({
-      message: 'User like status retrieved successfully',
-      hasLiked,
-      likes: menuItem.likes || 0
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch user like status:', error);
-    res.status(500).json({ error: 'Failed to fetch user like status', details: error.message });
-  }
-});
-
-// Increment view count with session tracking (public)
-app.post('/api/public/menu-items/:id/view', async (req, res) => {
-  try {
-    const { sessionId } = req.body;
-    
-    const menuItem = await MenuItem.findById(req.params.id);
-    if (!menuItem) {
-      return res.status(404).json({ error: 'Menu item not found' });
-    }
-
-    // Initialize userViews array if it doesn't exist
-    if (!menuItem.userViews) menuItem.userViews = [];
-
-    let shouldIncrement = true;
-
-    // Check if this session has already viewed this item recently (within 24 hours)
-    if (sessionId) {
-      const existingView = menuItem.userViews.find(v => v.sessionId === sessionId);
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-      if (existingView) {
-        // If last view was more than 24 hours ago, update timestamp and count as new view
-        if (existingView.lastViewed < twentyFourHoursAgo) {
-          existingView.lastViewed = new Date();
-          existingView.viewCount += 1;
-        } else {
-          // Viewed recently, don't increment main count
-          shouldIncrement = false;
-        }
-      } else {
-        // First view from this session
-        menuItem.userViews.push({
-          sessionId,
-          lastViewed: new Date(),
-          viewCount: 1
-        });
-      }
-    }
-
-    if (shouldIncrement) {
-      menuItem.viewCount += 1;
-      menuItem.popularity = menuItem.calculatePopularity();
-    }
-
-    await menuItem.save();
-
-    console.log(`👀 View recorded for ${menuItem.name}${sessionId ? ` by session ${sessionId.substring(0, 8)}...` : ''}, total views: ${menuItem.viewCount}`);
-    
-    res.json({
-      message: 'View recorded successfully',
-      menuItem: {
-        id: menuItem._id,
-        name: menuItem.name,
-        viewCount: menuItem.viewCount,
-        viewIncremented: shouldIncrement
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to record view:', error);
-    res.status(500).json({ error: 'Failed to record view', details: error.message });
-  }
-});
-
-// Get popular menu items (public)
-app.get('/api/public/restaurants/:id/popular-items', async (req, res) => {
-  try {
-    const restaurantId = req.params.id;
-    const limit = parseInt(req.query.limit) || 10;
-    
-    const popularItems = await MenuItem.find({ 
-      restaurant: restaurantId,
-      isAvailable: true 
-    })
-    .sort({ popularity: -1, likes: -1, 'rating.average': -1 })
-    .limit(limit)
-    .select('name description price image rating likes popularity viewCount nutrition takeaway')
-    .populate('category', 'name');
-
-    res.json({
-      message: 'Popular items retrieved successfully',
-      popularItems
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch popular items:', error);
-    res.status(500).json({ error: 'Failed to fetch popular items', details: error.message });
-  }
-});
-
-// Get menu item with engagement status for a specific user (public)
-app.get('/api/public/menu-items/:id/engagement', async (req, res) => {
-  try {
-    const { sessionId } = req.query;
-    
-    const menuItem = await MenuItem.findById(req.params.id)
-      .populate('category', 'name')
-      .populate('restaurant', 'name logo');
-    
-    if (!menuItem) {
-      return res.status(404).json({ error: 'Menu item not found' });
-    }
-
-    let userRating = null;
-    let userHasLiked = false;
-
-    if (sessionId) {
-      // Get user's rating
-      const ratingObj = menuItem.userRatings?.find(r => r.sessionId === sessionId);
-      userRating = ratingObj ? ratingObj.rating : null;
-      
-      // Get user's like status
-      userHasLiked = menuItem.userLikes?.includes(sessionId) || false;
-    }
-
-    res.json({
-      message: 'Menu item engagement data retrieved successfully',
-      menuItem: {
-        id: menuItem._id,
-        name: menuItem.name,
-        description: menuItem.description,
-        price: menuItem.price,
-        image: menuItem.image,
-        category: menuItem.category,
-        restaurant: menuItem.restaurant,
-        rating: {
-          average: menuItem.rating.average,
-          count: menuItem.rating.count,
-          distribution: menuItem.rating.distribution,
-          userRating: userRating
-        },
-        likes: menuItem.likes,
-        userHasLiked: userHasLiked,
-        viewCount: menuItem.viewCount,
-        popularity: menuItem.popularity,
-        nutrition: menuItem.nutrition,
-        takeaway: menuItem.takeaway
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch menu item engagement:', error);
-    res.status(500).json({ error: 'Failed to fetch menu item engagement', details: error.message });
   }
 });
 
@@ -1125,7 +873,7 @@ app.post('/api/tables', async (req, res) => {
 });
 
 // ============================================================================
-// ORDERS ROUTES
+// ORDERS ROUTES - UPDATED WITH SSE NOTIFICATIONS
 // ============================================================================
 
 // Get orders with filtering
@@ -1185,7 +933,7 @@ app.get('/api/orders/:id', auth, async (req, res) => {
   }
 });
 
-// Create new order with table support
+// Create new order with SSE notifications
 app.post('/api/orders', async (req, res) => {
   try {
     const { restaurant, customerName, table, items, totalAmount, orderType } = req.body;
@@ -1228,7 +976,7 @@ app.post('/api/orders', async (req, res) => {
       }
     }
 
-    // MANUALLY GENERATE ORDER NUMBER
+    // Generate order number
     const generateOrderNumber = () => {
       const date = new Date();
       const timestamp = date.getTime();
@@ -1239,7 +987,7 @@ app.post('/api/orders', async (req, res) => {
     const orderNumber = generateOrderNumber();
     console.log('🔢 Generated order number:', orderNumber);
 
-    // Create order with manually generated orderNumber
+    // Create order
     const order = new Order({
       orderNumber: orderNumber,
       restaurant,
@@ -1284,6 +1032,20 @@ app.post('/api/orders', async (req, res) => {
     }
     console.log(`📊 Order details: ${populatedOrder.items.length} items, Total: ${totalAmount} CFA`);
     
+    // 🔌 NOTIFY VIA SSE
+    try {
+      const restaurantId = populatedOrder.restaurant._id.toString();
+      notifyRestaurant(restaurantId, {
+        type: 'new_order',
+        order: populatedOrder,
+        message: 'New order received',
+        timestamp: new Date().toISOString()
+      });
+      console.log(`🔔 SSE notification sent for new order: ${populatedOrder.orderNumber}`);
+    } catch (error) {
+      console.error('❌ Failed to send SSE notification:', error);
+    }
+    
     res.status(201).json({
       message: 'Order created successfully',
       order: populatedOrder
@@ -1306,7 +1068,7 @@ app.post('/api/orders', async (req, res) => {
   }
 });
 
-// Update order status
+// Update order status with SSE notification
 app.put('/api/orders/:id/status', auth, async (req, res) => {
   try {
     const { status } = req.body;
@@ -1352,7 +1114,20 @@ app.put('/api/orders/:id/status', auth, async (req, res) => {
       .populate('table', 'tableNumber');
 
     console.log(`✅ Order ${req.params.id} status updated to: ${status}`);
-    
+     
+    // 🔌 NOTIFY VIA SSE
+    try {
+      notifyRestaurant(restaurantId, {
+        type: 'order_updated',
+        order: populatedOrder,
+        message: 'Order status updated',
+        timestamp: new Date().toISOString()
+      });
+      console.log(`🔔 SSE notification sent for order update: ${populatedOrder.orderNumber}`);
+    } catch (error) {
+      console.error('❌ Failed to send SSE notification:', error);
+    }
+
     res.json({
       message: 'Order status updated successfully',
       order: populatedOrder
@@ -1363,7 +1138,7 @@ app.put('/api/orders/:id/status', auth, async (req, res) => {
   }
 });
 
-// MARK ORDER AS PAID
+// MARK ORDER AS PAID with SSE notification
 app.put('/api/orders/:id/pay', auth, async (req, res) => {
   try {
     const restaurantId = req.user.restaurant._id;
@@ -1396,6 +1171,19 @@ app.put('/api/orders/:id/pay', auth, async (req, res) => {
       .populate('table', 'tableNumber');
 
     console.log(`✅ Order ${req.params.id} marked as paid and status updated to: ${updatedOrder.status}`);
+
+    // 🔌 NOTIFY VIA SSE
+    try {
+      notifyRestaurant(restaurantId, {
+        type: 'order_paid',
+        order: populatedOrder,
+        message: 'Order marked as paid',
+        timestamp: new Date().toISOString()
+      });
+      console.log(`🔔 SSE payment notification sent: ${populatedOrder.orderNumber}`);
+    } catch (error) {
+      console.error('❌ Failed to send SSE notification:', error);
+    }
 
     res.json({
       message: 'Order marked as paid successfully',
@@ -1458,174 +1246,6 @@ app.put('/api/orders/:id/unpay', auth, async (req, res) => {
   } catch (error) {
     console.error('❌ Failed to mark order as unpaid:', error);
     res.status(500).json({ error: 'Failed to mark order as unpaid', details: error.message });
-  }
-});
-
-// ============================================================================
-// RESTAURANT RATING ENDPOINTS
-// ============================================================================
-
-// Rate/Update/Remove restaurant rating (public)
-app.post('/api/public/restaurants/:id/rate', async (req, res) => {
-  try {
-    const { rating, sessionId, action = 'set' } = req.body;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
-    }
-
-    const restaurant = await Restaurant.findById(req.params.id);
-    if (!restaurant) {
-      return res.status(404).json({ error: 'Restaurant not found' });
-    }
-
-    let userRating = null;
-    let message = '';
-
-    // Initialize restaurant ratings array if it doesn't exist
-    if (!restaurant.userRatings) restaurant.userRatings = [];
-
-    // Check if user already rated this restaurant
-    const existingRating = restaurant.userRatings.find(r => r.sessionId === sessionId);
-
-    switch (action) {
-      case 'set':
-        if (!rating || rating < 1 || rating > 5) {
-          return res.status(400).json({ error: 'Rating must be between 1 and 5' });
-        }
-        
-        if (existingRating) {
-          // Update existing rating
-          existingRating.rating = rating;
-          existingRating.updatedAt = new Date();
-          message = 'Restaurant rating updated successfully';
-        } else {
-          // Add new rating
-          restaurant.userRatings.push({
-            sessionId,
-            rating,
-            createdAt: new Date(),
-            updatedAt: new Date()
-          });
-          message = 'Restaurant rating submitted successfully';
-        }
-        userRating = rating;
-        break;
-
-      case 'remove':
-        if (existingRating) {
-          restaurant.userRatings = restaurant.userRatings.filter(r => r.sessionId !== sessionId);
-          message = 'Restaurant rating removed successfully';
-        } else {
-          return res.status(404).json({ error: 'No restaurant rating found to remove' });
-        }
-        break;
-
-      default:
-        return res.status(400).json({ error: 'Invalid action' });
-    }
-
-    // Recalculate restaurant average rating
-    if (restaurant.userRatings.length > 0) {
-      const total = restaurant.userRatings.reduce((sum, r) => sum + r.rating, 0);
-      restaurant.rating = {
-        average: total / restaurant.userRatings.length,
-        count: restaurant.userRatings.length,
-        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
-      };
-      
-      // Update rating distribution
-      restaurant.userRatings.forEach(r => {
-        restaurant.rating.distribution[r.rating]++;
-      });
-    } else {
-      restaurant.rating = {
-        average: 0,
-        count: 0,
-        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
-      };
-    }
-
-    await restaurant.save();
-
-    console.log(`🏪 ${message} for ${restaurant.name} by session ${sessionId.substring(0, 8)}...`);
-    
-    res.json({
-      message,
-      restaurant: {
-        id: restaurant._id,
-        name: restaurant.name,
-        rating: restaurant.rating,
-        userRating: userRating
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to process restaurant rating:', error);
-    res.status(500).json({ error: 'Failed to process restaurant rating', details: error.message });
-  }
-});
-
-// Get user's restaurant rating (public)
-app.get('/api/public/restaurants/:id/user-rating', async (req, res) => {
-  try {
-    const { sessionId } = req.query;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID required' });
-    }
-
-    const restaurant = await Restaurant.findById(req.params.id);
-    if (!restaurant) {
-      return res.status(404).json({ error: 'Restaurant not found' });
-    }
-
-    const userRating = restaurant.userRatings?.find(r => r.sessionId === sessionId);
-
-    res.json({
-      message: 'User restaurant rating retrieved successfully',
-      userRating: userRating ? userRating.rating : null,
-      hasRated: !!userRating
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch user restaurant rating:', error);
-    res.status(500).json({ error: 'Failed to fetch user restaurant rating', details: error.message });
-  }
-});
-
-// Get restaurant with user engagement data (public)
-app.get('/api/public/restaurants/:id/engagement', async (req, res) => {
-  try {
-    const { sessionId } = req.query;
-    
-    const restaurant = await Restaurant.findById(req.params.id)
-      .select('name description logo contact address theme rating userRatings');
-    
-    if (!restaurant) {
-      return res.status(404).json({ error: 'Restaurant not found' });
-    }
-
-    let userRating = null;
-
-    if (sessionId) {
-      // Get user's restaurant rating
-      const ratingObj = restaurant.userRatings?.find(r => r.sessionId === sessionId);
-      userRating = ratingObj ? ratingObj.rating : null;
-    }
-
-    // Remove user-specific arrays from response for security
-    const restaurantData = restaurant.toObject();
-    delete restaurantData.userRatings;
-
-    res.json({
-      message: 'Restaurant engagement data retrieved successfully',
-      restaurant: {
-        ...restaurantData,
-        userRating: userRating
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch restaurant engagement:', error);
-    res.status(500).json({ error: 'Failed to fetch restaurant engagement', details: error.message });
   }
 });
 
@@ -1875,17 +1495,10 @@ app.get('/api/public/restaurants/:id', async (req, res) => {
       return res.status(404).json({ error: 'Restaurant not found' });
     }
 
-    console.log('📦 Restaurant from database:');
-    console.log('  - Name:', restaurant.name);
-    console.log('  - Direct rating access:', restaurant.rating);
-    
     // Convert to plain object
     let restaurantData = restaurant.toObject ? restaurant.toObject() : restaurant;
     
-    console.log('🔍 Checking rating in plain object:', restaurantData.rating);
-    console.log('📋 All keys in restaurant:', Object.keys(restaurantData));
-
-    // CRITICAL FIX: Ensure rating exists in the response
+    // Ensure rating exists in the response
     if (!restaurantData.rating) {
       console.log('⚠️ RATING MISSING - Adding default rating structure');
       restaurantData.rating = {
@@ -1902,11 +1515,6 @@ app.get('/api/public/restaurants/:id', async (req, res) => {
       console.log('✅ Database updated');
     }
 
-    console.log('🎯 Final restaurant data being sent:', {
-      name: restaurantData.name,
-      rating: restaurantData.rating
-    });
-
     res.json({ 
       message: 'Restaurant retrieved successfully',
       restaurant: restaurantData
@@ -1918,7 +1526,7 @@ app.get('/api/public/restaurants/:id', async (req, res) => {
   }
 });
 
-// Get restaurant menu items (public) - UPDATED with virtual fields
+// Get restaurant menu items (public)
 app.get('/api/public/restaurants/:id/menu', async (req, res) => {
   try {
     const restaurantId = req.params.id;
@@ -1957,7 +1565,6 @@ app.get('/api/public/restaurants/:id/menu', async (req, res) => {
       }
       
       // Calculate total takeaway price (item price + packaging fee)
-      // This ensures frontend always has the correct total
       itemObj.totalTakeawayPrice = itemObj.takeaway.takeawayPrice + itemObj.takeaway.packagingFee;
       
       // Add a convenience field for frontend
@@ -2025,6 +1632,7 @@ app.get('/api', (req, res) => {
     { method: 'GET', path: '/api/test', description: 'Test backend' },
     { method: 'GET', path: '/api/test-db', description: 'Test database connection' },
     { method: 'GET', path: '/api/db-info', description: 'Get database information' },
+    { method: 'GET', path: '/api/sse-debug', description: 'Get SSE connection status' },
     
     // Restaurant settings routes
     { method: 'GET', path: '/api/restaurants/current', description: 'Get current restaurant (protected)' },
@@ -2042,19 +1650,9 @@ app.get('/api', (req, res) => {
     
     // Menu routes (protected)
     { method: 'GET', path: '/api/menu-items', description: 'Get menu items for logged-in restaurant (protected)' },
-    { method: 'GET', path: '/api/menu-items/:id', description: 'Get specific menu item' },
     { method: 'POST', path: '/api/menu-items', description: 'Create menu item (protected)' },
     { method: 'PUT', path: '/api/menu-items/:id', description: 'Update menu item (protected)' },
     { method: 'DELETE', path: '/api/menu-items/:id', description: 'Delete menu item (protected)' },
-    
-    // UPDATED Menu engagement routes (public)
-    { method: 'POST', path: '/api/public/menu-items/:id/rate', description: 'Rate/Update/Remove rating for menu item' },
-    { method: 'GET', path: '/api/public/menu-items/:id/user-rating', description: 'Get user rating for menu item' },
-    { method: 'POST', path: '/api/public/menu-items/:id/like', description: 'Like/Unlike menu item' },
-    { method: 'GET', path: '/api/public/menu-items/:id/user-like', description: 'Check if user liked menu item' },
-    { method: 'POST', path: '/api/public/menu-items/:id/view', description: 'Increment view count with session tracking' },
-    { method: 'GET', path: '/api/public/menu-items/:id/engagement', description: 'Get menu item with user engagement status' },
-    { method: 'GET', path: '/api/public/restaurants/:id/popular-items', description: 'Get popular menu items' },
     
     // Category routes (protected)
     { method: 'GET', path: '/api/categories', description: 'Get categories for logged-in restaurant (protected)' },
@@ -2063,13 +1661,16 @@ app.get('/api', (req, res) => {
     
     // Table routes
     { method: 'GET', path: '/api/tables', description: 'Get tables (optional: restaurantId)' },
+    { method: 'POST', path: '/api/tables', description: 'Create table' },
     
     // Order routes
     { method: 'GET', path: '/api/orders', description: 'Get orders for logged-in restaurant (protected)' },
     { method: 'GET', path: '/api/orders/:id', description: 'Get specific order (protected)' },
+    { method: 'POST', path: '/api/orders', description: 'Create new order' },
     { method: 'PUT', path: '/api/orders/:id/status', description: 'Update order status (protected)' },
     { method: 'PUT', path: '/api/orders/:id/pay', description: 'Mark order as paid (protected)' },
     { method: 'PUT', path: '/api/orders/:id/unpay', description: 'Mark order as unpaid (protected)' },
+    { method: 'GET', path: '/api/orders/stream/:restaurantId', description: 'SSE stream for real-time order updates' },
     
     // Auth routes
     { method: 'GET', path: '/api/auth', description: 'Auth base route' },
@@ -2099,8 +1700,8 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🔐 JWT Secret: ${JWT_SECRET === 'your-fallback-secret-key-change-in-production' ? 'Using fallback - set JWT_SECRET in .env' : 'Using environment variable'}`);
   console.log(`🌐 API available at: http://localhost:${PORT}/api`);
+  console.log(`🔔 SSE available at: http://localhost:${PORT}/api/orders/stream/:restaurantId`);
   console.log(`☁️  Cloudinary configured for image hosting!`);
   console.log(`📸 Menu item images stored in: menu-items/ folder`);
   console.log(`🖼️ Restaurant logos stored in: restaurant-logos/ folder`);
-  console.log(`⭐ Enhanced engagement system with session tracking!`);
 });
