@@ -484,7 +484,587 @@ app.put('/api/users/current', auth, async (req, res) => {
 // ============================================================================
 // EXISTING RESTAURANT ROUTES (public - for landing pages, etc.)
 // ============================================================================
+// ============================================================================
+// MENU ITEM ENGAGEMENT ROUTES (PUBLIC)
+// ============================================================================
 
+// Rate/Update/Remove rating for menu item (public)
+app.post('/api/public/menu-items/:id/rate', async (req, res) => {
+  try {
+    const { rating, sessionId, action = 'set' } = req.body;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
+    }
+
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    let userRating = null;
+    let message = '';
+
+    // Check if user already rated this item
+    const existingRating = menuItem.userRatings?.find(r => r.sessionId === sessionId);
+
+    switch (action) {
+      case 'set':
+        if (!rating || rating < 1 || rating > 5) {
+          return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+        }
+        
+        if (existingRating) {
+          // Update existing rating
+          const oldRating = existingRating.rating;
+          existingRating.rating = rating;
+          existingRating.updatedAt = new Date();
+          message = 'Rating updated successfully';
+        } else {
+          // Add new rating
+          if (!menuItem.userRatings) menuItem.userRatings = [];
+          menuItem.userRatings.push({
+            sessionId,
+            rating,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          });
+          message = 'Rating submitted successfully';
+        }
+        userRating = rating;
+        break;
+
+      case 'remove':
+        if (existingRating) {
+          menuItem.userRatings = menuItem.userRatings.filter(r => r.sessionId !== sessionId);
+          message = 'Rating removed successfully';
+        } else {
+          return res.status(404).json({ error: 'No rating found to remove' });
+        }
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    // Recalculate average rating
+    if (menuItem.userRatings && menuItem.userRatings.length > 0) {
+      const total = menuItem.userRatings.reduce((sum, r) => sum + r.rating, 0);
+      menuItem.rating.average = total / menuItem.userRatings.length;
+      menuItem.rating.count = menuItem.userRatings.length;
+      
+      // Update rating distribution
+      menuItem.rating.distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      menuItem.userRatings.forEach(r => {
+        menuItem.rating.distribution[r.rating]++;
+      });
+    } else {
+      menuItem.rating.average = 0;
+      menuItem.rating.count = 0;
+      menuItem.rating.distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    }
+
+    await menuItem.save();
+
+    console.log(`⭐ ${message} for ${menuItem.name} by session ${sessionId.substring(0, 8)}...`);
+    
+    res.json({
+      message,
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        averageRating: menuItem.rating.average,
+        ratingCount: menuItem.rating.count,
+        userRating: userRating,
+        ratingDistribution: menuItem.rating.distribution
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to process rating:', error);
+    res.status(500).json({ error: 'Failed to process rating', details: error.message });
+  }
+});
+
+// Get user's rating for a menu item (public)
+app.get('/api/public/menu-items/:id/user-rating', async (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
+    }
+
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    const userRating = menuItem.userRatings?.find(r => r.sessionId === sessionId);
+
+    res.json({
+      message: 'User rating retrieved successfully',
+      userRating: userRating ? userRating.rating : null,
+      hasRated: !!userRating
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch user rating:', error);
+    res.status(500).json({ error: 'Failed to fetch user rating', details: error.message });
+  }
+});
+
+// Like/Unlike a menu item (public)
+app.post('/api/public/menu-items/:id/like', async (req, res) => {
+  try {
+    const { sessionId, action = 'toggle' } = req.body;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
+    }
+
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    // Initialize userLikes array if it doesn't exist
+    if (!menuItem.userLikes) menuItem.userLikes = [];
+
+    const hasLiked = menuItem.userLikes.includes(sessionId);
+    let message = '';
+    let newLikeStatus = false;
+
+    if (action === 'toggle') {
+      if (hasLiked) {
+        // Unlike
+        menuItem.userLikes = menuItem.userLikes.filter(id => id !== sessionId);
+        menuItem.likes = Math.max(0, menuItem.likes - 1);
+        message = 'Item unliked successfully';
+        newLikeStatus = false;
+      } else {
+        // Like
+        menuItem.userLikes.push(sessionId);
+        menuItem.likes += 1;
+        message = 'Item liked successfully';
+        newLikeStatus = true;
+      }
+    } else if (action === 'like' && !hasLiked) {
+      menuItem.userLikes.push(sessionId);
+      menuItem.likes += 1;
+      message = 'Item liked successfully';
+      newLikeStatus = true;
+    } else if (action === 'unlike' && hasLiked) {
+      menuItem.userLikes = menuItem.userLikes.filter(id => id !== sessionId);
+      menuItem.likes = Math.max(0, menuItem.likes - 1);
+      message = 'Item unliked successfully';
+      newLikeStatus = false;
+    } else {
+      message = 'No change made';
+      newLikeStatus = hasLiked;
+    }
+
+    // Update popularity score
+    menuItem.popularity = menuItem.calculatePopularity();
+    
+    await menuItem.save();
+
+    console.log(`❤️ ${message} for ${menuItem.name} by session ${sessionId.substring(0, 8)}..., total likes: ${menuItem.likes}`);
+    
+    res.json({
+      message,
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        likes: menuItem.likes,
+        userHasLiked: newLikeStatus
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to process like:', error);
+    res.status(500).json({ error: 'Failed to process like', details: error.message });
+  }
+});
+
+// Check if user has liked a menu item (public)
+app.get('/api/public/menu-items/:id/user-like', async (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
+    }
+
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    const hasLiked = menuItem.userLikes?.includes(sessionId) || false;
+
+    res.json({
+      message: 'User like status retrieved successfully',
+      hasLiked,
+      likes: menuItem.likes || 0
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch user like status:', error);
+    res.status(500).json({ error: 'Failed to fetch user like status', details: error.message });
+  }
+});
+
+// Increment view count with session tracking (public)
+app.post('/api/public/menu-items/:id/view', async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    
+    const menuItem = await MenuItem.findById(req.params.id);
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    // Initialize userViews array if it doesn't exist
+    if (!menuItem.userViews) menuItem.userViews = [];
+
+    let shouldIncrement = true;
+
+    // Check if this session has already viewed this item recently (within 24 hours)
+    if (sessionId) {
+      const existingView = menuItem.userViews.find(v => v.sessionId === sessionId);
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+      if (existingView) {
+        // If last view was more than 24 hours ago, update timestamp and count as new view
+        if (existingView.lastViewed < twentyFourHoursAgo) {
+          existingView.lastViewed = new Date();
+          existingView.viewCount += 1;
+        } else {
+          // Viewed recently, don't increment main count
+          shouldIncrement = false;
+        }
+      } else {
+        // First view from this session
+        menuItem.userViews.push({
+          sessionId,
+          lastViewed: new Date(),
+          viewCount: 1
+        });
+      }
+    }
+
+    if (shouldIncrement) {
+      menuItem.viewCount += 1;
+      menuItem.popularity = menuItem.calculatePopularity();
+    }
+
+    await menuItem.save();
+
+    console.log(`👀 View recorded for ${menuItem.name}${sessionId ? ` by session ${sessionId.substring(0, 8)}...` : ''}, total views: ${menuItem.viewCount}`);
+    
+    res.json({
+      message: 'View recorded successfully',
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        viewCount: menuItem.viewCount,
+        viewIncremented: shouldIncrement
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to record view:', error);
+    res.status(500).json({ error: 'Failed to record view', details: error.message });
+  }
+});
+
+// Get popular menu items (public)
+app.get('/api/public/restaurants/:id/popular-items', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    const limit = parseInt(req.query.limit) || 10;
+    
+    const popularItems = await MenuItem.find({ 
+      restaurant: restaurantId,
+      isAvailable: true 
+    })
+    .sort({ popularity: -1, likes: -1, 'rating.average': -1 })
+    .limit(limit)
+    .select('name description price image rating likes popularity viewCount nutrition takeaway')
+    .populate('category', 'name');
+
+    res.json({
+      message: 'Popular items retrieved successfully',
+      popularItems
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch popular items:', error);
+    res.status(500).json({ error: 'Failed to fetch popular items', details: error.message });
+  }
+});
+
+// Get menu item with engagement status for a specific user (public)
+app.get('/api/public/menu-items/:id/engagement', async (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    
+    const menuItem = await MenuItem.findById(req.params.id)
+      .populate('category', 'name')
+      .populate('restaurant', 'name logo');
+    
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found' });
+    }
+
+    let userRating = null;
+    let userHasLiked = false;
+
+    if (sessionId) {
+      // Get user's rating
+      const ratingObj = menuItem.userRatings?.find(r => r.sessionId === sessionId);
+      userRating = ratingObj ? ratingObj.rating : null;
+      
+      // Get user's like status
+      userHasLiked = menuItem.userLikes?.includes(sessionId) || false;
+    }
+
+    res.json({
+      message: 'Menu item engagement data retrieved successfully',
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        description: menuItem.description,
+        price: menuItem.price,
+        image: menuItem.image,
+        category: menuItem.category,
+        restaurant: menuItem.restaurant,
+        rating: {
+          average: menuItem.rating.average,
+          count: menuItem.rating.count,
+          distribution: menuItem.rating.distribution,
+          userRating: userRating
+        },
+        likes: menuItem.likes,
+        userHasLiked: userHasLiked,
+        viewCount: menuItem.viewCount,
+        popularity: menuItem.popularity,
+        nutrition: menuItem.nutrition,
+        takeaway: menuItem.takeaway
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch menu item engagement:', error);
+    res.status(500).json({ error: 'Failed to fetch menu item engagement', details: error.message });
+  }
+});
+// ============================================================================
+// RESTAURANT RATING ENDPOINTS (PUBLIC)
+// ============================================================================
+
+// Rate/Update/Remove restaurant rating (public)
+app.post('/api/public/restaurants/:id/rate', async (req, res) => {
+  try {
+    const { rating, sessionId, action = 'set' } = req.body;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
+    }
+
+    const restaurant = await Restaurant.findById(req.params.id);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    let userRating = null;
+    let message = '';
+
+    // Initialize restaurant ratings array if it doesn't exist
+    if (!restaurant.userRatings) restaurant.userRatings = [];
+
+    // Check if user already rated this restaurant
+    const existingRating = restaurant.userRatings.find(r => r.sessionId === sessionId);
+
+    switch (action) {
+      case 'set':
+        if (!rating || rating < 1 || rating > 5) {
+          return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+        }
+        
+        if (existingRating) {
+          // Update existing rating
+          existingRating.rating = rating;
+          existingRating.updatedAt = new Date();
+          message = 'Restaurant rating updated successfully';
+        } else {
+          // Add new rating
+          restaurant.userRatings.push({
+            sessionId,
+            rating,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          });
+          message = 'Restaurant rating submitted successfully';
+        }
+        userRating = rating;
+        break;
+
+      case 'remove':
+        if (existingRating) {
+          restaurant.userRatings = restaurant.userRatings.filter(r => r.sessionId !== sessionId);
+          message = 'Restaurant rating removed successfully';
+        } else {
+          return res.status(404).json({ error: 'No restaurant rating found to remove' });
+        }
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid action' });
+    }
+
+    // Recalculate restaurant average rating
+    if (restaurant.userRatings.length > 0) {
+      const total = restaurant.userRatings.reduce((sum, r) => sum + r.rating, 0);
+      restaurant.rating = {
+        average: total / restaurant.userRatings.length,
+        count: restaurant.userRatings.length,
+        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+      };
+      
+      // Update rating distribution
+      restaurant.userRatings.forEach(r => {
+        restaurant.rating.distribution[r.rating]++;
+      });
+    } else {
+      restaurant.rating = {
+        average: 0,
+        count: 0,
+        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+      };
+    }
+
+    await restaurant.save();
+
+    console.log(`🏪 ${message} for ${restaurant.name} by session ${sessionId.substring(0, 8)}...`);
+    
+    res.json({
+      message,
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name,
+        rating: restaurant.rating,
+        userRating: userRating
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to process restaurant rating:', error);
+    res.status(500).json({ error: 'Failed to process restaurant rating', details: error.message });
+  }
+});
+
+// Get user's restaurant rating (public)
+app.get('/api/public/restaurants/:id/user-rating', async (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID required' });
+    }
+
+    const restaurant = await Restaurant.findById(req.params.id);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    const userRating = restaurant.userRatings?.find(r => r.sessionId === sessionId);
+
+    res.json({
+      message: 'User restaurant rating retrieved successfully',
+      userRating: userRating ? userRating.rating : null,
+      hasRated: !!userRating
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch user restaurant rating:', error);
+    res.status(500).json({ error: 'Failed to fetch user restaurant rating', details: error.message });
+  }
+});
+
+// Get restaurant with user engagement data (public)
+app.get('/api/public/restaurants/:id/engagement', async (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    
+    const restaurant = await Restaurant.findById(req.params.id)
+      .select('name description logo contact address theme rating userRatings');
+    
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    let userRating = null;
+
+    if (sessionId) {
+      // Get user's restaurant rating
+      const ratingObj = restaurant.userRatings?.find(r => r.sessionId === sessionId);
+      userRating = ratingObj ? ratingObj.rating : null;
+    }
+
+    // Remove user-specific arrays from response for security
+    const restaurantData = restaurant.toObject();
+    delete restaurantData.userRatings;
+
+    res.json({
+      message: 'Restaurant engagement data retrieved successfully',
+      restaurant: {
+        ...restaurantData,
+        userRating: userRating
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurant engagement:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant engagement', details: error.message });
+  }
+});
+app.get('/api/public/orders/by-number/:orderNumber', async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+    
+    const order = await Order.findOne({ orderNumber })
+      .populate('items.menuItem', 'name description image price')
+      .populate('table', 'tableNumber')
+      .populate('restaurant', 'name logo');
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    res.json({
+      message: 'Order retrieved successfully',
+      order
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch order by number:', error);
+    res.status(500).json({ error: 'Failed to fetch order', details: error.message });
+  }
+});
+
+app.get('/api/public/orders/:orderId', async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    const order = await Order.findById(orderId)
+      .populate('items.menuItem', 'name description image price')
+      .populate('table', 'tableNumber')
+      .populate('restaurant', 'name logo');
+    
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    
+    res.json({
+      message: 'Order retrieved successfully',
+      order
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch order:', error);
+    res.status(500).json({ error: 'Failed to fetch order', details: error.message });
+  }
+});
 app.get('/api/restaurants', async (req, res) => {
   try {
     const restaurants = await Restaurant.find().select('-__v');
@@ -758,6 +1338,136 @@ app.post('/api/categories', auth, async (req, res) => {
   } catch (error) {
     console.error('❌ Failed to create category:', error);
     res.status(500).json({ error: 'Failed to create category', details: error.message });
+  }
+});
+
+// ============================================================================
+// ORDER MANAGEMENT ENDPOINTS
+// ============================================================================
+
+// Delete all orders for a specific restaurant (protected - for testing/cleanup)
+app.delete('/api/orders/restaurant/:restaurantId', auth, async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    
+    console.log(`🧹 DELETE - Cleaning up all orders for restaurant: ${restaurantId}`);
+
+    // Verify the authenticated user owns this restaurant
+    if (req.user.restaurant._id.toString() !== restaurantId) {
+      return res.status(403).json({ 
+        error: 'Access denied - you can only delete orders for your own restaurant' 
+      });
+    }
+
+    // Verify restaurant exists
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    // Delete all orders for this restaurant
+    const result = await Order.deleteMany({ restaurant: restaurantId });
+
+    console.log(`✅ Deleted ${result.deletedCount} orders for restaurant: ${restaurant.name}`);
+
+    res.json({
+      message: `Successfully deleted ${result.deletedCount} orders for restaurant: ${restaurant.name}`,
+      deletedCount: result.deletedCount,
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Failed to delete orders:', error);
+    res.status(500).json({ error: 'Failed to delete orders', details: error.message });
+  }
+});
+
+// Delete all orders for current user's restaurant (protected)
+app.delete('/api/orders/current-restaurant', auth, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant._id;
+    
+    console.log(`🧹 DELETE - Cleaning up all orders for current restaurant: ${req.user.restaurant.name}`);
+
+    // Delete all orders for current user's restaurant
+    const result = await Order.deleteMany({ restaurant: restaurantId });
+
+    console.log(`✅ Deleted ${result.deletedCount} orders for restaurant: ${req.user.restaurant.name}`);
+
+    res.json({
+      message: `Successfully deleted ${result.deletedCount} orders for your restaurant`,
+      deletedCount: result.deletedCount,
+      restaurant: {
+        id: req.user.restaurant._id,
+        name: req.user.restaurant.name
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Failed to delete orders:', error);
+    res.status(500).json({ error: 'Failed to delete orders', details: error.message });
+  }
+});
+
+// Delete orders with filters (protected)
+app.delete('/api/orders/restaurant/:restaurantId/filtered', auth, async (req, res) => {
+  try {
+    const { restaurantId } = req.params;
+    const { status, paymentStatus, orderType, daysOld } = req.body;
+    
+    console.log(`🧹 DELETE - Filtered order cleanup for restaurant: ${restaurantId}`, req.body);
+
+    // Verify the authenticated user owns this restaurant
+    if (req.user.restaurant._id.toString() !== restaurantId) {
+      return res.status(403).json({ 
+        error: 'Access denied - you can only delete orders for your own restaurant' 
+      });
+    }
+
+    // Build query based on filters
+    let query = { restaurant: restaurantId };
+    
+    if (status && status !== 'all') {
+      query.status = status;
+    }
+    
+    if (paymentStatus && paymentStatus !== 'all') {
+      query.paymentStatus = paymentStatus;
+    }
+    
+    if (orderType && orderType !== 'all') {
+      query.orderType = orderType;
+    }
+    
+    if (daysOld && daysOld > 0) {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+      query.createdAt = { $lt: cutoffDate };
+    }
+
+    console.log('🔍 Delete query:', query);
+
+    const result = await Order.deleteMany(query);
+
+    console.log(`✅ Deleted ${result.deletedCount} filtered orders for restaurant: ${restaurantId}`);
+
+    res.json({
+      message: `Successfully deleted ${result.deletedCount} orders based on your filters`,
+      deletedCount: result.deletedCount,
+      filters: {
+        status,
+        paymentStatus,
+        orderType,
+        daysOld
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Failed to delete filtered orders:', error);
+    res.status(500).json({ error: 'Failed to delete orders', details: error.message });
   }
 });
 
