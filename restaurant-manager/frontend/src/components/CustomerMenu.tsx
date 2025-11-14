@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from '../contexts/ToastContext';
 
@@ -157,6 +157,34 @@ const CustomerMenu: React.FC = () => {
   // Order History state
   const [showOrderHistory, setShowOrderHistory] = useState(false);
 
+  // Scroll position and category persistence
+  const scrollPositionRef = useRef(0);
+  const selectedCategoryRef = useRef(selectedCategory);
+  const searchTermRef = useRef(searchTerm);
+
+  // Update refs when state changes
+  useEffect(() => {
+    selectedCategoryRef.current = selectedCategory;
+  }, [selectedCategory]);
+
+  useEffect(() => {
+    searchTermRef.current = searchTerm;
+  }, [searchTerm]);
+
+  // Save scroll position before any re-renders
+  const saveScrollPosition = useCallback(() => {
+    scrollPositionRef.current = window.scrollY;
+  }, []);
+
+  // Restore scroll position after re-render
+  const restoreScrollPosition = useCallback(() => {
+    if (scrollPositionRef.current > 0) {
+      setTimeout(() => {
+        window.scrollTo(0, scrollPositionRef.current);
+      }, 100);
+    }
+  }, []);
+
   // Custom toast state for CustomerMenu
   const [customerToast, setCustomerToast] = useState<{
     message: string;
@@ -303,6 +331,11 @@ useEffect(() => {
     try {
       setLoading(true);
       
+      // Save current state before loading new data
+      const currentCategory = selectedCategoryRef.current;
+      const currentSearchTerm = searchTermRef.current;
+      saveScrollPosition();
+      
       const [restaurantResponse, menuResponse, categoriesResponse] = await Promise.all([
         fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}`),
         fetch(`http://localhost:5000/api/public/restaurants/${restaurantId}/menu`),
@@ -319,6 +352,16 @@ useEffect(() => {
       setRestaurant(restaurantData.restaurant || restaurantData);
       setMenuItems(menuData.menuItems || []);
       setCategories(categoriesData.categories || []);
+      
+      // Restore the category and search term after data loads
+      setSelectedCategory(currentCategory);
+      setSearchTerm(currentSearchTerm);
+      
+      // Restore scroll position after a brief delay to ensure DOM is updated
+      setTimeout(() => {
+        restoreScrollPosition();
+      }, 200);
+      
     } catch (error: any) {
       showError(`Failed to load restaurant menu: ${error.message}`);
       navigate('/waiter/restaurants');
@@ -753,20 +796,23 @@ saveOrderToHistory({
         }
       `}</style>
 
-      {/* Header */}
+            {/* Header */}
       <div className="w-full shadow-sm sticky top-0 z-50 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 flex-1 min-w-0">
-              <button
-                onClick={() => {
-                  const searchParams = new URLSearchParams(location.search);
-                  navigate(`/waiter/restaurants?${searchParams.toString()}`);
-                }}
-                className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all flex-shrink-0"
-              >
-                <i className="ri-arrow-left-line text-lg sm:text-xl text-gray-700"></i>
-              </button>
+              {/* Conditionally render back arrow based on URL parameters */}
+              {!tableNumber && (
+                <button
+                  onClick={() => {
+                    const searchParams = new URLSearchParams(location.search);
+                    navigate(`/waiter/restaurants?${searchParams.toString()}`);
+                  }}
+                  className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-all flex-shrink-0"
+                >
+                  <i className="ri-arrow-left-line text-lg sm:text-xl text-gray-700"></i>
+                </button>
+              )}
               <div className="min-w-0 flex-1">
                 <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{restaurant.name}</h1>
                 {tableNumber && (
