@@ -2192,6 +2192,514 @@ app.get('/api/public/restaurants/by-category/:categoryName', async (req, res) =>
 });
 
 // ============================================================================
+// ADMIN ROUTES
+// ============================================================================
+
+// Admin middleware (must be super_admin)
+const adminAuth = async (req, res, next) => {
+  try {
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(401).json({ error: 'No token, authorization denied' });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(decoded.userId).populate('restaurant');
+    
+    if (!user) {
+      return res.status(401).json({ error: 'Token is not valid' });
+    }
+
+    if (user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error('❌ Admin auth error:', error);
+    res.status(401).json({ error: 'Token is not valid' });
+  }
+};
+
+// Admin login
+app.post('/api/admin/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    console.log('🔐 Admin login attempt:', email);
+
+    // Find user
+    const user = await User.findOne({ email }).populate('restaurant');
+    if (!user) {
+      console.log('❌ Admin login failed: User not found');
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Check if user is super_admin
+    if (user.role !== 'super_admin') {
+      console.log('❌ Admin login failed: Not a super admin');
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    // Verify password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      console.log('❌ Admin login failed: Invalid password');
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Generate token
+    const token = jwt.sign(
+      { 
+        userId: user._id,
+        role: user.role 
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('✅ Admin login successful:', user.email);
+
+    res.json({
+      message: 'Admin login successful',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('❌ Admin login error:', error);
+    res.status(500).json({ error: 'Server error during login' });
+  }
+});
+
+// Get all restaurants (admin view)
+app.get('/api/admin/restaurants', adminAuth, async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search = '' } = req.query;
+    
+    const query = {};
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { 'contact.email': { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const restaurants = await Restaurant.find(query)
+      .select('-__v')
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .sort({ createdAt: -1 });
+
+    const total = await Restaurant.countDocuments(query);
+
+    // Get user counts for each restaurant
+    const restaurantsWithStats = await Promise.all(
+      restaurants.map(async (restaurant) => {
+        const userCount = await User.countDocuments({ restaurant: restaurant._id });
+        const menuItemCount = await MenuItem.countDocuments({ restaurant: restaurant._id });
+        const orderCount = await Order.countDocuments({ restaurant: restaurant._id });
+        
+        return {
+          ...restaurant.toObject(),
+          userCount,
+          menuItemCount,
+          orderCount
+        };
+      })
+    );
+
+    res.json({
+      message: 'Restaurants retrieved successfully',
+      restaurants: restaurantsWithStats,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      total
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurants:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurants', details: error.message });
+  }
+});
+
+// Create new restaurant
+app.post('/api/admin/restaurants', adminAuth, async (req, res) => {
+  try {
+    const { 
+      name, 
+      description, 
+      email, 
+      phone, 
+      address,
+      adminName,
+      adminPassword 
+    } = req.body;
+
+    console.log('🏪 Creating new restaurant:', name);
+
+    // Validate required fields
+    if (!name || !email || !adminName || !adminPassword) {
+      return res.status(400).json({ 
+        error: 'Name, email, admin name, and password are required' 
+      });
+    }
+
+    // Check if restaurant email already exists
+    const existingRestaurant = await Restaurant.findOne({
+      'contact.email': email
+    });
+    if (existingRestaurant) {
+      return res.status(400).json({ error: 'Restaurant with this email already exists' });
+    }
+
+    // Create restaurant
+    const restaurant = new Restaurant({
+      name,
+      description,
+      contact: {
+        email,
+        phone
+      },
+      address: address || {},
+      isActive: true
+    });
+
+    const savedRestaurant = await restaurant.save();
+
+    // Create admin user for this restaurant
+    const hashedPassword = await bcrypt.hash(adminPassword, 10);
+    
+    const adminUser = new User({
+      name: adminName,
+      email,
+      password: hashedPassword,
+      role: 'restaurant_admin',
+      restaurant: savedRestaurant._id
+    });
+
+    await adminUser.save();
+
+    console.log('✅ Restaurant and admin user created successfully');
+
+    res.status(201).json({
+      message: 'Restaurant created successfully',
+      restaurant: savedRestaurant,
+      adminUser: {
+        id: adminUser._id,
+        name: adminUser.name,
+        email: adminUser.email
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to create restaurant:', error);
+    res.status(500).json({ error: 'Failed to create restaurant', details: error.message });
+  }
+});
+
+// Update restaurant
+app.put('/api/admin/restaurants/:id', adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log('🔄 Updating restaurant:', id);
+
+    const restaurant = await Restaurant.findByIdAndUpdate(
+      id,
+      req.body,
+      { new: true, runValidators: true }
+    );
+
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    console.log('✅ Restaurant updated successfully:', restaurant.name);
+
+    res.json({
+      message: 'Restaurant updated successfully',
+      restaurant
+    });
+  } catch (error) {
+    console.error('❌ Failed to update restaurant:', error);
+    res.status(500).json({ error: 'Failed to update restaurant', details: error.message });
+  }
+});
+
+// Toggle restaurant availability
+app.put('/api/admin/restaurants/:id/toggle-active', adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const restaurant = await Restaurant.findById(id);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    restaurant.isActive = !restaurant.isActive;
+    await restaurant.save();
+
+    console.log(`✅ Restaurant ${restaurant.name} ${restaurant.isActive ? 'activated' : 'deactivated'}`);
+
+    res.json({
+      message: `Restaurant ${restaurant.isActive ? 'activated' : 'deactivated'} successfully`,
+      restaurant
+    });
+  } catch (error) {
+    console.error('❌ Failed to toggle restaurant status:', error);
+    res.status(500).json({ error: 'Failed to toggle restaurant status', details: error.message });
+  }
+});
+
+// Reset restaurant admin password
+app.put('/api/admin/restaurants/:id/reset-password', adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+    }
+
+    // Find the restaurant admin user
+    const adminUser = await User.findOne({
+      restaurant: id,
+      role: 'restaurant_admin'
+    });
+
+    if (!adminUser) {
+      return res.status(404).json({ error: 'Admin user not found for this restaurant' });
+    }
+
+    // Update password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    adminUser.password = hashedPassword;
+    await adminUser.save();
+
+    console.log('✅ Admin password reset for restaurant:', id);
+
+    res.json({
+      message: 'Admin password reset successfully',
+      user: {
+        id: adminUser._id,
+        name: adminUser.name,
+        email: adminUser.email
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to reset password:', error);
+    res.status(500).json({ error: 'Failed to reset password', details: error.message });
+  }
+});
+
+// Get restaurant analytics
+app.get('/api/admin/restaurants/:id/analytics', adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { period = '30d' } = req.query; // 7d, 30d, 90d, 1y
+
+    // Calculate date range
+    const now = new Date();
+    let startDate = new Date();
+    
+    switch (period) {
+      case '7d':
+        startDate.setDate(now.getDate() - 7);
+        break;
+      case '30d':
+        startDate.setDate(now.getDate() - 30);
+        break;
+      case '90d':
+        startDate.setDate(now.getDate() - 90);
+        break;
+      case '1y':
+        startDate.setFullYear(now.getFullYear() - 1);
+        break;
+      default:
+        startDate.setDate(now.getDate() - 30);
+    }
+
+    const [
+      restaurant,
+      totalOrders,
+      totalRevenue,
+      activeUsers,
+      menuItems,
+      recentOrders,
+      ordersByStatus,
+      revenueByDay
+    ] = await Promise.all([
+      // Restaurant details
+      Restaurant.findById(id),
+      
+      // Total orders in period
+      Order.countDocuments({
+        restaurant: id,
+        createdAt: { $gte: startDate }
+      }),
+      
+      // Total revenue in period
+      Order.aggregate([
+        {
+          $match: {
+            restaurant: mongoose.Types.ObjectId(id),
+            paymentStatus: 'paid',
+            createdAt: { $gte: startDate }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$totalAmount' }
+          }
+        }
+      ]),
+      
+      // Active users count
+      User.countDocuments({ restaurant: id, isActive: true }),
+      
+      // Menu items count
+      MenuItem.countDocuments({ restaurant: id }),
+      
+      // Recent orders
+      Order.find({ restaurant: id })
+        .populate('items.menuItem', 'name')
+        .sort({ createdAt: -1 })
+        .limit(10),
+      
+      // Orders by status
+      Order.aggregate([
+        {
+          $match: {
+            restaurant: mongoose.Types.ObjectId(id),
+            createdAt: { $gte: startDate }
+          }
+        },
+        {
+          $group: {
+            _id: '$status',
+            count: { $sum: 1 }
+          }
+        }
+      ]),
+      
+      // Revenue by day
+      Order.aggregate([
+        {
+          $match: {
+            restaurant: mongoose.Types.ObjectId(id),
+            paymentStatus: 'paid',
+            createdAt: { $gte: startDate }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: '%Y-%m-%d',
+                date: '$createdAt'
+              }
+            },
+            revenue: { $sum: '$totalAmount' },
+            orders: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ])
+    ]);
+
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    const analytics = {
+      overview: {
+        totalOrders,
+        totalRevenue: revenueByDay[0]?.total || 0,
+        activeUsers,
+        menuItems,
+        averageOrderValue: totalOrders > 0 ? (revenueByDay[0]?.total || 0) / totalOrders : 0
+      },
+      ordersByStatus: ordersByStatus.reduce((acc, item) => {
+        acc[item._id] = item.count;
+        return acc;
+      }, {}),
+      revenueTrend: revenueByDay,
+      recentOrders,
+      period: {
+        start: startDate,
+        end: now,
+        label: period
+      }
+    };
+
+    res.json({
+      message: 'Analytics retrieved successfully',
+      restaurant,
+      analytics
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics', details: error.message });
+  }
+});
+
+// Get system-wide analytics
+app.get('/api/admin/analytics/overview', adminAuth, async (req, res) => {
+  try {
+    const [
+      totalRestaurants,
+      activeRestaurants,
+      totalUsers,
+      totalOrders,
+      totalRevenue,
+      recentRegistrations
+    ] = await Promise.all([
+      Restaurant.countDocuments(),
+      Restaurant.countDocuments({ isActive: true }),
+      User.countDocuments(),
+      Order.countDocuments(),
+      Order.aggregate([
+        {
+          $match: { paymentStatus: 'paid' }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$totalAmount' }
+          }
+        }
+      ]),
+      Restaurant.find()
+        .sort({ createdAt: -1 })
+        .limit(5)
+    ]);
+
+    res.json({
+      message: 'System analytics retrieved successfully',
+      analytics: {
+        totalRestaurants,
+        activeRestaurants,
+        inactiveRestaurants: totalRestaurants - activeRestaurants,
+        totalUsers,
+        totalOrders,
+        totalRevenue: totalRevenue[0]?.total || 0,
+        recentRegistrations
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch system analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch system analytics', details: error.message });
+  }
+});
+
+
+// ============================================================================
 // PUBLIC RESTAURANT ENDPOINTS (for customer-facing app)
 // ============================================================================
 
