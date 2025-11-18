@@ -7,7 +7,7 @@ const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('./config/cloudinary');
 require('dotenv').config();
-
+const jwt = require('jsonwebtoken');
 const app = express();
 
 // Import models
@@ -2192,36 +2192,74 @@ app.get('/api/public/restaurants/by-category/:categoryName', async (req, res) =>
 });
 
 // ============================================================================
-// ADMIN ROUTES
+// WAITER super ADMIN ROUTES
 // ============================================================================
 
-// Admin middleware (must be super_admin)
-const adminAuth = async (req, res, next) => {
+const { adminAuth } = require('./middleware/adminAuth');
+
+// Add this to your server.js temporarily for debugging
+app.post('/api/admin/debug-login', async (req, res) => {
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    
-    if (!token) {
-      return res.status(401).json({ error: 'No token, authorization denied' });
-    }
+    const { email, password } = req.body;
+    console.log('🔐 DEBUG Admin login attempt:', email);
 
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const user = await User.findById(decoded.userId).populate('restaurant');
-    
+    // Find user
+    const user = await User.findOne({ email }).populate('restaurant');
     if (!user) {
-      return res.status(401).json({ error: 'Token is not valid' });
+      console.log('❌ DEBUG: User not found');
+      return res.status(400).json({ error: 'Invalid credentials' });
     }
 
+    console.log('🔐 DEBUG: User found:', {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive
+    });
+
+    // Check if user is super_admin
     if (user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Access denied. Admin privileges required.' });
+      console.log('❌ DEBUG: Not a super admin, role is:', user.role);
+      return res.status(403).json({ error: 'Admin access required' });
     }
 
-    req.user = user;
-    next();
+    // Verify password
+    const isMatch = await bcrypt.compare(password, user.password);
+    console.log('🔐 DEBUG: Password match:', isMatch);
+    
+    if (!isMatch) {
+      console.log('❌ DEBUG: Invalid password');
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Generate token
+    const token = jwt.sign(
+      { 
+        userId: user._id,
+        role: user.role 
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    console.log('✅ DEBUG: Admin login successful, token generated');
+    console.log('🔐 DEBUG: Token length:', token.length);
+
+    res.json({
+      message: 'Admin login successful',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
   } catch (error) {
-    console.error('❌ Admin auth error:', error);
-    res.status(401).json({ error: 'Token is not valid' });
+    console.error('❌ DEBUG Admin login error:', error);
+    res.status(500).json({ error: 'Server error during login' });
   }
-};
+});
 
 // Admin login
 app.post('/api/admin/login', async (req, res) => {
@@ -2402,16 +2440,36 @@ app.post('/api/admin/restaurants', adminAuth, async (req, res) => {
   }
 });
 
-// Update restaurant
+// In your server.js - Update the restaurant update route
 app.put('/api/admin/restaurants/:id', adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
+    const { 
+      name, 
+      description, 
+      email, 
+      phone, 
+      address,
+      adminName,
+      adminEmail, 
+      adminPassword,
+      changeCredentials = false 
+    } = req.body;
     
-    console.log('🔄 Updating restaurant:', id);
+    console.log('🔄 Updating restaurant:', id, 'Change credentials:', changeCredentials);
+    console.log('📧 Admin data received:', { adminName, adminEmail, adminPassword: adminPassword ? '***' : 'empty' });
+
+    // Update restaurant data
+    const restaurantUpdate = {
+      name,
+      description,
+      contact: { email, phone },
+      ...(address && { address })
+    };
 
     const restaurant = await Restaurant.findByIdAndUpdate(
       id,
-      req.body,
+      restaurantUpdate,
       { new: true, runValidators: true }
     );
 
@@ -2419,14 +2477,59 @@ app.put('/api/admin/restaurants/:id', adminAuth, async (req, res) => {
       return res.status(404).json({ error: 'Restaurant not found' });
     }
 
+    let adminUpdate = null;
+
+    // Update admin credentials if requested and provided
+    if (changeCredentials) {
+      const adminUser = await User.findOne({
+        restaurant: id,
+        role: 'restaurant_admin'
+      });
+
+      if (adminUser) {
+        const adminUpdateData = {};
+        if (adminName) adminUpdateData.name = adminName;
+        if (adminEmail) adminUpdateData.email = adminEmail;
+        if (adminPassword && adminPassword.length > 0) {
+          const hashedPassword = await bcrypt.hash(adminPassword, 10);
+          adminUpdateData.password = hashedPassword;
+        }
+
+        // Only update if there are actual changes
+        if (Object.keys(adminUpdateData).length > 0) {
+          adminUpdate = await User.findByIdAndUpdate(
+            adminUser._id,
+            adminUpdateData,
+            { new: true }
+          ).select('-password -__v');
+          
+          console.log('✅ Admin credentials updated:', {
+            name: adminUpdate.name,
+            email: adminUpdate.email,
+            passwordChanged: !!adminPassword
+          });
+        } else {
+          console.log('ℹ️ No admin credential changes to apply');
+        }
+      } else {
+        console.log('❌ Admin user not found for restaurant');
+      }
+    }
+
     console.log('✅ Restaurant updated successfully:', restaurant.name);
 
     res.json({
       message: 'Restaurant updated successfully',
-      restaurant
+      restaurant,
+      ...(adminUpdate && { admin: adminUpdate })
     });
   } catch (error) {
     console.error('❌ Failed to update restaurant:', error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+    
     res.status(500).json({ error: 'Failed to update restaurant', details: error.message });
   }
 });
@@ -2501,7 +2604,7 @@ app.put('/api/admin/restaurants/:id/reset-password', adminAuth, async (req, res)
 app.get('/api/admin/restaurants/:id/analytics', adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { period = '30d' } = req.query; // 7d, 30d, 90d, 1y
+    const { period = '30d' } = req.query;
 
     // Calculate date range
     const now = new Date();
@@ -2527,27 +2630,22 @@ app.get('/api/admin/restaurants/:id/analytics', adminAuth, async (req, res) => {
     const [
       restaurant,
       totalOrders,
-      totalRevenue,
+      revenueResult,
       activeUsers,
       menuItems,
       recentOrders,
       ordersByStatus,
       revenueByDay
     ] = await Promise.all([
-      // Restaurant details
       Restaurant.findById(id),
-      
-      // Total orders in period
       Order.countDocuments({
         restaurant: id,
         createdAt: { $gte: startDate }
       }),
-      
-      // Total revenue in period
       Order.aggregate([
         {
           $match: {
-            restaurant: mongoose.Types.ObjectId(id),
+            restaurant: new mongoose.Types.ObjectId(id),
             paymentStatus: 'paid',
             createdAt: { $gte: startDate }
           }
@@ -2559,24 +2657,16 @@ app.get('/api/admin/restaurants/:id/analytics', adminAuth, async (req, res) => {
           }
         }
       ]),
-      
-      // Active users count
       User.countDocuments({ restaurant: id, isActive: true }),
-      
-      // Menu items count
       MenuItem.countDocuments({ restaurant: id }),
-      
-      // Recent orders
       Order.find({ restaurant: id })
         .populate('items.menuItem', 'name')
         .sort({ createdAt: -1 })
         .limit(10),
-      
-      // Orders by status
       Order.aggregate([
         {
           $match: {
-            restaurant: mongoose.Types.ObjectId(id),
+            restaurant: new mongoose.Types.ObjectId(id),
             createdAt: { $gte: startDate }
           }
         },
@@ -2587,12 +2677,10 @@ app.get('/api/admin/restaurants/:id/analytics', adminAuth, async (req, res) => {
           }
         }
       ]),
-      
-      // Revenue by day
       Order.aggregate([
         {
           $match: {
-            restaurant: mongoose.Types.ObjectId(id),
+            restaurant: new mongoose.Types.ObjectId(id),
             paymentStatus: 'paid',
             createdAt: { $gte: startDate }
           }
@@ -2617,13 +2705,15 @@ app.get('/api/admin/restaurants/:id/analytics', adminAuth, async (req, res) => {
       return res.status(404).json({ error: 'Restaurant not found' });
     }
 
+    const totalRevenue = revenueResult[0]?.total || 0;
+
     const analytics = {
       overview: {
         totalOrders,
-        totalRevenue: revenueByDay[0]?.total || 0,
+        totalRevenue,
         activeUsers,
         menuItems,
-        averageOrderValue: totalOrders > 0 ? (revenueByDay[0]?.total || 0) / totalOrders : 0
+        averageOrderValue: totalOrders > 0 ? totalRevenue / totalOrders : 0
       },
       ordersByStatus: ordersByStatus.reduce((acc, item) => {
         acc[item._id] = item.count;
@@ -2657,7 +2747,7 @@ app.get('/api/admin/analytics/overview', adminAuth, async (req, res) => {
       activeRestaurants,
       totalUsers,
       totalOrders,
-      totalRevenue,
+      revenueResult,
       recentRegistrations
     ] = await Promise.all([
       Restaurant.countDocuments(),
@@ -2688,13 +2778,219 @@ app.get('/api/admin/analytics/overview', adminAuth, async (req, res) => {
         inactiveRestaurants: totalRestaurants - activeRestaurants,
         totalUsers,
         totalOrders,
-        totalRevenue: totalRevenue[0]?.total || 0,
+        totalRevenue: revenueResult[0]?.total || 0,
         recentRegistrations
       }
     });
   } catch (error) {
     console.error('❌ Failed to fetch system analytics:', error);
     res.status(500).json({ error: 'Failed to fetch system analytics', details: error.message });
+  }
+});
+
+// ============================================================================
+// ADMIN PROFILE ENDPOINTS
+// ============================================================================
+
+// Get admin profile
+app.get('/api/admin/profile', adminAuth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId)
+      .select('-password -__v');
+
+    if (!user) {
+      return res.status(404).json({ error: 'Admin user not found' });
+    }
+
+    if (user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    res.json({
+      message: 'Admin profile retrieved successfully 23',
+      admin: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch admin profile:', error);
+    res.status(500).json({ error: 'Failed to fetch admin profile', details: error.message });
+  }
+});
+
+// Update admin profile
+app.put('/api/admin/profile', adminAuth, async (req, res) => {
+  try {
+    const { name, email } = req.body;
+
+    console.log('👤 Updating admin profile:', req.user.userId);
+
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (email) updateData.email = email;
+
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password -__v');
+
+    if (!user) {
+      return res.status(404).json({ error: 'the Admin user not found' });
+    }
+
+    if (user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    console.log('✅ Admin profile updated successfully');
+    
+    res.json({
+      message: 'Admin profile updated successfully',
+      admin: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to update admin profile:', error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+    
+    res.status(500).json({ error: 'Failed to update admin profile', details: error.message });
+  }
+});
+
+// Change admin password
+app.put('/api/admin/change-password', adminAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+    }
+
+    console.log('🔐 Changing admin password:', req.user.userId);
+
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Admin user not found' });
+    }
+
+    if (user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    // Verify current password
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    await user.save();
+
+    console.log('✅ Admin password changed successfully');
+    
+    res.json({
+      message: 'Password changed successfully'
+    });
+  } catch (error) {
+    console.error('❌ Failed to change admin password:', error);
+    res.status(500).json({ error: 'Failed to change password', details: error.message });
+  }
+});
+// ============================================================================
+// RESTAURANT ADMIN MANAGEMENT ROUTES
+// ============================================================================
+
+// Get restaurant admin user
+app.get('/api/admin/restaurants/:id/admin', adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const adminUser = await User.findOne({
+      restaurant: id,
+      role: 'restaurant_admin'
+    }).select('-password -__v');
+
+    if (!adminUser) {
+      return res.status(404).json({ error: 'Admin user not found for this restaurant' });
+    }
+
+    res.json({
+      message: 'Admin user retrieved successfully',
+      admin: adminUser
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch admin user:', error);
+    res.status(500).json({ error: 'Failed to fetch admin user', details: error.message });
+  }
+});
+
+// Update restaurant admin credentials
+app.put('/api/admin/restaurants/:id/admin', adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, password } = req.body;
+
+    console.log('👤 Updating restaurant admin credentials for restaurant:', id);
+
+    // Find the restaurant admin user
+    const adminUser = await User.findOne({
+      restaurant: id,
+      role: 'restaurant_admin'
+    });
+
+    if (!adminUser) {
+      return res.status(404).json({ error: 'Admin user not found for this restaurant' });
+    }
+
+    // Update fields if provided
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (email) updateData.email = email;
+    if (password && password.length > 0) {
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+      }
+      const hashedPassword = await bcrypt.hash(password, 10);
+      updateData.password = hashedPassword;
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      adminUser._id,
+      updateData,
+      { new: true, runValidators: true }
+    ).select('-password -__v');
+
+    console.log('✅ Restaurant admin credentials updated successfully');
+
+    res.json({
+      message: 'Admin credentials updated successfully',
+      admin: updatedUser
+    });
+  } catch (error) {
+    console.error('❌ Failed to update admin credentials:', error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+    
+    res.status(500).json({ error: 'Failed to update admin credentials', details: error.message });
   }
 });
 

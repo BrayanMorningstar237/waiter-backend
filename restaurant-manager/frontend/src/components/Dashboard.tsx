@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useSearchParams } from 'react-router-dom';
 import MenuManagement from './MenuManagement';
@@ -6,13 +6,146 @@ import OrderManagement from './OrderManagement';
 import QRCodeGenerator from './QRCodeGenerator';
 import Settings from './Settings';
 
-
 type TabType = 'dashboard' | 'menu' | 'orders' | 'qr-codes' | 'settings';
+
+// Define TypeScript interfaces for order data
+interface OrderItem {
+  menuItem: string;
+  name: string;
+  quantity: number;
+  price: number;
+  isTakeaway: boolean;
+  specialInstructions?: string;
+}
+
+interface Table {
+  tableNumber: string;
+  _id: string;
+}
+
+interface Order {
+  _id: string;
+  orderNumber: string;
+  restaurant: {
+    _id: string;
+    name: string;
+    logo?: string;
+  };
+  customerName: string;
+  items: OrderItem[];
+  totalAmount: number;
+  status: 'pending' | 'confirmed' | 'preparing' | 'ready' | 'served' | 'completed' | 'cancelled';
+  paymentStatus: 'pending' | 'paid' | 'refunded';
+  orderType: 'dine-in' | 'takeaway';
+  table?: Table;
+  createdAt: string;
+  updatedAt: string;
+  paidAt?: string;
+}
+
+// SSE Hook for Dashboard
+const useDashboardSSE = (restaurantId: string | undefined, onNewOrder: (order: Order) => void, onOrderUpdate: (order: Order) => void) => {
+  const [isConnected, setIsConnected] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimeout = useRef<number | null>(null);
+  const reconnectAttempts = useRef(0);
+  const maxReconnectAttempts = 5;
+
+  const connectSSE = useCallback(() => {
+    if (!restaurantId) {
+      console.log('❌ No restaurant ID for SSE connection');
+      return;
+    }
+
+    try {
+      console.log(`🔔 Connecting SSE for dashboard: ${restaurantId}`);
+      const eventSource = new EventSource(`http://localhost:5000/api/orders/stream/${restaurantId}`);
+      
+      eventSource.onopen = () => {
+        console.log('✅ Dashboard SSE connection established');
+        setIsConnected(true);
+        reconnectAttempts.current = 0;
+      };
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('🔔 Dashboard SSE message received:', data);
+
+          switch (data.type) {
+            case 'connected':
+              console.log('✅ Dashboard SSE connection confirmed');
+              break;
+            case 'new_order':
+              console.log('🆕 New order via Dashboard SSE:', data.order.orderNumber);
+              onNewOrder(data.order);
+              break;
+            case 'order_updated':
+              console.log('🔄 Order updated via Dashboard SSE:', data.order.orderNumber);
+              onOrderUpdate(data.order);
+              break;
+            case 'order_paid':
+              console.log('💳 Order paid via Dashboard SSE:', data.order.orderNumber);
+              onOrderUpdate(data.order);
+              break;
+            default:
+              console.log('📨 Unknown Dashboard SSE message type:', data.type);
+          }
+        } catch (error) {
+          console.error('❌ Failed to parse Dashboard SSE message:', error);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('❌ Dashboard SSE error:', error);
+        setIsConnected(false);
+        eventSource.close();
+        
+        // Attempt reconnect after delay
+        if (reconnectAttempts.current < maxReconnectAttempts) {
+          reconnectAttempts.current++;
+          const delay = Math.min(3000 * reconnectAttempts.current, 30000);
+          
+          console.log(`🔄 Attempting Dashboard SSE reconnect in ${delay}ms... (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
+          
+          reconnectTimeout.current = window.setTimeout(() => {
+            connectSSE();
+          }, delay);
+        } else {
+          console.error('❌ Max Dashboard SSE reconnection attempts reached');
+        }
+      };
+
+      eventSourceRef.current = eventSource;
+
+    } catch (error) {
+      console.error('❌ Failed to create Dashboard SSE connection:', error);
+      setIsConnected(false);
+    }
+  }, [restaurantId, onNewOrder, onOrderUpdate]);
+
+  useEffect(() => {
+    connectSSE();
+
+    return () => {
+      if (reconnectTimeout.current) {
+        window.clearTimeout(reconnectTimeout.current);
+      }
+      if (eventSourceRef.current) {
+        console.log('🔔 Closing Dashboard SSE connection');
+        eventSourceRef.current.close();
+      }
+    };
+  }, [connectSSE]);
+
+  return { isConnected };
+};
 
 const Dashboard: React.FC = () => {
   const { user, logout } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [pendingOrdersCount, setPendingOrdersCount] = useState<number>(0);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('connecting');
   
   // Get active tab and orderId from URL or default to 'dashboard'
   const activeTab = (searchParams.get('tab') as TabType) || 'dashboard';
@@ -26,6 +159,55 @@ const Dashboard: React.FC = () => {
     setSearchParams(params);
   };
 
+  // Fetch pending orders count
+  const fetchPendingOrdersCount = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch('http://localhost:5000/api/orders?status=pending', {
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      // Check if response is OK
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      setPendingOrdersCount(data.orders?.length || 0);
+    } catch (error) {
+      console.error('Failed to fetch pending orders count:', error);
+      setPendingOrdersCount(0); // Set to 0 on error
+    }
+  };
+
+  // SSE callbacks
+  const handleNewOrder = useCallback((newOrder: Order) => {
+    console.log('Dashboard: New order received', newOrder);
+    // Refresh pending orders count when new order comes in
+    fetchPendingOrdersCount();
+  }, []);
+
+  const handleOrderUpdate = useCallback((updatedOrder: Order) => {
+    console.log('Dashboard: Order updated', updatedOrder);
+    // Refresh pending orders count when order is updated
+    fetchPendingOrdersCount();
+  }, []);
+
+  // Use the SSE hook
+  const { isConnected } = useDashboardSSE(
+    user?.restaurant?._id,
+    handleNewOrder,
+    handleOrderUpdate
+  );
+
+  // Update connection status
+  useEffect(() => {
+    setConnectionStatus(isConnected ? 'connected' : 'disconnected');
+  }, [isConnected]);
+
   // Clear orderId when switching away from orders tab
   useEffect(() => {
     if (activeTab !== 'orders' && orderIdParam) {
@@ -35,31 +217,7 @@ const Dashboard: React.FC = () => {
     }
   }, [activeTab, orderIdParam, searchParams, setSearchParams]);
 
-  // Fetch pending orders count
   useEffect(() => {
-    const fetchPendingOrdersCount = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const response = await fetch('http://localhost:5000/api/orders?status=pending', {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        // Check if response is OK
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        setPendingOrdersCount(data.orders?.length || 0);
-      } catch (error) {
-        console.error('Failed to fetch pending orders count:', error);
-        setPendingOrdersCount(0); // Set to 0 on error
-      }
-    };
-
     // Fetch count when orders tab is active or when component mounts
     if (activeTab === 'orders' || activeTab === 'dashboard') {
       fetchPendingOrdersCount();
@@ -124,6 +282,7 @@ const Dashboard: React.FC = () => {
             onQuickAction={handleQuickAction}
             onViewAllOrders={handleViewAllOrders}
             onOrderClick={handleOrderClick}
+            connectionStatus={connectionStatus}
           />
         );
     }
@@ -295,13 +454,15 @@ interface DashboardContentProps {
   onQuickAction: (action: string) => void;
   onViewAllOrders: () => void;
   onOrderClick: (orderId: string) => void;
+  connectionStatus: 'connected' | 'disconnected' | 'connecting';
 }
 
 const DashboardContent: React.FC<DashboardContentProps> = ({ 
   pendingOrdersCount, 
   onQuickAction, 
   onViewAllOrders,
-  onOrderClick 
+  onOrderClick,
+  connectionStatus
 }) => {
   const { user } = useAuth();
   const [stats, setStats] = useState({
@@ -544,6 +705,23 @@ const DashboardContent: React.FC<DashboardContentProps> = ({
               <span className="text-sm font-semibold bg-white/20 px-3 py-1 rounded-full">
                 {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
               </span>
+              <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                connectionStatus === 'connected' 
+                  ? 'bg-green-100 text-green-700' 
+                  : connectionStatus === 'connecting'
+                  ? 'bg-yellow-100 text-yellow-700'
+                  : 'bg-red-100 text-red-700'
+              }`}>
+                <div className={`w-2 h-2 rounded-full ${
+                  connectionStatus === 'connected' 
+                    ? 'bg-green-500 animate-pulse' 
+                    : connectionStatus === 'connecting'
+                    ? 'bg-yellow-500 animate-pulse'
+                    : 'bg-red-500'
+                }`}></div>
+                {connectionStatus === 'connected' ? 'Live' : 
+                 connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+              </div>
             </div>
             <h2 className="text-2xl md:text-3xl font-bold mb-2">
               Welcome back, {user?.name}! 👋

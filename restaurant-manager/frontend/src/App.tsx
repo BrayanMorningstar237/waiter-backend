@@ -7,6 +7,7 @@ import { ToastProvider } from './contexts/ToastContext';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import CustomerRoutes from './routes/CustomerRoutes';
+import AdminApp from './components/AdminApp'; // Import the admin app
 
 const AppContent: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -24,6 +25,9 @@ const AppContent: React.FC = () => {
 
   return (
     <Routes>
+      {/* Super Admin routes - accessible without authentication */}
+      <Route path="/waiter-admin/*" element={<AdminApp />} />
+
       {/* Customer-facing routes */}
       <Route path="/waiter/*" element={<CustomerRoutes />} />
 
