@@ -2194,72 +2194,7 @@ app.get('/api/public/restaurants/by-category/:categoryName', async (req, res) =>
 // ============================================================================
 // WAITER super ADMIN ROUTES
 // ============================================================================
-
 const { adminAuth } = require('./middleware/adminAuth');
-
-// Add this to your server.js temporarily for debugging
-app.post('/api/admin/debug-login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    console.log('🔐 DEBUG Admin login attempt:', email);
-
-    // Find user
-    const user = await User.findOne({ email }).populate('restaurant');
-    if (!user) {
-      console.log('❌ DEBUG: User not found');
-      return res.status(400).json({ error: 'Invalid credentials' });
-    }
-
-    console.log('🔐 DEBUG: User found:', {
-      id: user._id,
-      email: user.email,
-      role: user.role,
-      isActive: user.isActive
-    });
-
-    // Check if user is super_admin
-    if (user.role !== 'super_admin') {
-      console.log('❌ DEBUG: Not a super admin, role is:', user.role);
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
-    // Verify password
-    const isMatch = await bcrypt.compare(password, user.password);
-    console.log('🔐 DEBUG: Password match:', isMatch);
-    
-    if (!isMatch) {
-      console.log('❌ DEBUG: Invalid password');
-      return res.status(400).json({ error: 'Invalid credentials' });
-    }
-
-    // Generate token
-    const token = jwt.sign(
-      { 
-        userId: user._id,
-        role: user.role 
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    console.log('✅ DEBUG: Admin login successful, token generated');
-    console.log('🔐 DEBUG: Token length:', token.length);
-
-    res.json({
-      message: 'Admin login successful',
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
-  } catch (error) {
-    console.error('❌ DEBUG Admin login error:', error);
-    res.status(500).json({ error: 'Server error during login' });
-  }
-});
 
 // Admin login
 app.post('/api/admin/login', async (req, res) => {
@@ -2277,7 +2212,7 @@ app.post('/api/admin/login', async (req, res) => {
 
     // Check if user is super_admin
     if (user.role !== 'super_admin') {
-      console.log('❌ Admin login failed: Not a super admin');
+      console.log('❌ Admin login failed: Not a super admin, role is:', user.role);
       return res.status(403).json({ error: 'Admin access required' });
     }
 
@@ -2316,7 +2251,7 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
-// Get all restaurants (admin view)
+// Get all restaurants (admin view) - ENHANCED VERSION
 app.get('/api/admin/restaurants', adminAuth, async (req, res) => {
   try {
     const { page = 1, limit = 10, search = '' } = req.query;
@@ -2337,18 +2272,38 @@ app.get('/api/admin/restaurants', adminAuth, async (req, res) => {
 
     const total = await Restaurant.countDocuments(query);
 
-    // Get user counts for each restaurant
+    // Get user counts and admin data for each restaurant
     const restaurantsWithStats = await Promise.all(
       restaurants.map(async (restaurant) => {
         const userCount = await User.countDocuments({ restaurant: restaurant._id });
         const menuItemCount = await MenuItem.countDocuments({ restaurant: restaurant._id });
         const orderCount = await Order.countDocuments({ restaurant: restaurant._id });
         
+        // Get admin user for this restaurant
+        const adminUser = await User.findOne({
+          restaurant: restaurant._id,
+          role: { $in: ['admin', 'restaurant_admin'] }
+        }).select('name email');
+        
         return {
-          ...restaurant.toObject(),
+          _id: restaurant._id,
+          name: restaurant.name,
+          description: restaurant.description,
+          contact: {
+            email: restaurant.contact?.email,
+            phone: restaurant.contact?.phone
+          },
+          address: restaurant.address,
+          logo: restaurant.logo,
+          theme: restaurant.theme,
+          isActive: restaurant.isActive,
+          rating: restaurant.rating,
           userCount,
           menuItemCount,
-          orderCount
+          orderCount,
+          adminUser: adminUser || null,
+          createdAt: restaurant.createdAt,
+          updatedAt: restaurant.updatedAt
         };
       })
     );
@@ -2357,7 +2312,7 @@ app.get('/api/admin/restaurants', adminAuth, async (req, res) => {
       message: 'Restaurants retrieved successfully',
       restaurants: restaurantsWithStats,
       totalPages: Math.ceil(total / limit),
-      currentPage: page,
+      currentPage: parseInt(page),
       total
     });
   } catch (error) {
@@ -2376,16 +2331,21 @@ app.post('/api/admin/restaurants', adminAuth, async (req, res) => {
       phone, 
       address,
       adminName,
+      adminEmail,
       adminPassword 
     } = req.body;
 
     console.log('🏪 Creating new restaurant:', name);
 
     // Validate required fields
-    if (!name || !email || !adminName || !adminPassword) {
+    if (!name || !email || !adminName || !adminEmail || !adminPassword) {
       return res.status(400).json({ 
-        error: 'Name, email, admin name, and password are required' 
+        error: 'Name, email, admin name, admin email, and password are required' 
       });
+    }
+
+    if (adminPassword.length < 6) {
+      return res.status(400).json({ error: 'Admin password must be at least 6 characters long' });
     }
 
     // Check if restaurant email already exists
@@ -2394,6 +2354,12 @@ app.post('/api/admin/restaurants', adminAuth, async (req, res) => {
     });
     if (existingRestaurant) {
       return res.status(400).json({ error: 'Restaurant with this email already exists' });
+    }
+
+    // Check if admin email already exists
+    const existingAdmin = await User.findOne({ email: adminEmail });
+    if (existingAdmin) {
+      return res.status(400).json({ error: 'Admin email already exists' });
     }
 
     // Create restaurant
@@ -2410,14 +2376,14 @@ app.post('/api/admin/restaurants', adminAuth, async (req, res) => {
 
     const savedRestaurant = await restaurant.save();
 
-    // Create admin user for this restaurant
+    // Create admin user for this restaurant - use 'admin' role for consistency
     const hashedPassword = await bcrypt.hash(adminPassword, 10);
     
     const adminUser = new User({
       name: adminName,
-      email,
+      email: adminEmail,
       password: hashedPassword,
-      role: 'restaurant_admin',
+      role: 'admin', // Use 'admin' instead of 'restaurant_admin' for consistency
       restaurant: savedRestaurant._id
     });
 
@@ -2431,24 +2397,31 @@ app.post('/api/admin/restaurants', adminAuth, async (req, res) => {
       adminUser: {
         id: adminUser._id,
         name: adminUser.name,
-        email: adminUser.email
+        email: adminUser.email,
+        role: adminUser.role
       }
     });
   } catch (error) {
     console.error('❌ Failed to create restaurant:', error);
+    
+    if (error.code === 11000) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+    
     res.status(500).json({ error: 'Failed to create restaurant', details: error.message });
   }
 });
 
-// In your server.js - Update the restaurant update route
+// /api/admin/restaurants/:id route - COMPLETE FIXED VERSION
 app.put('/api/admin/restaurants/:id', adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { 
       name, 
       description, 
-      email, 
-      phone, 
+      email,        // Flat restaurant email
+      phone,        // Flat restaurant phone  
+      contact,      // OR nested contact object
       address,
       adminName,
       adminEmail, 
@@ -2456,17 +2429,37 @@ app.put('/api/admin/restaurants/:id', adminAuth, async (req, res) => {
       changeCredentials = false 
     } = req.body;
     
-    console.log('🔄 Updating restaurant:', id, 'Change credentials:', changeCredentials);
-    console.log('📧 Admin data received:', { adminName, adminEmail, adminPassword: adminPassword ? '***' : 'empty' });
+    console.log('🔄 Updating restaurant:', id);
+    console.log('📝 Raw request body received:', JSON.stringify(req.body, null, 2));
+    console.log('🔍 Parsing contact data - Flat email:', email, 'Flat phone:', phone);
+    console.log('🔍 Parsing contact data - Nested contact:', contact);
 
-    // Update restaurant data
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid restaurant ID format' });
+    }
+
+    // Handle both flat and nested contact structures
+    const restaurantEmail = email || contact?.email;
+    const restaurantPhone = phone || contact?.phone;
+
+    console.log('✅ Processed restaurant contact data:', { 
+      restaurantEmail, 
+      restaurantPhone 
+    });
+
+    // Build restaurant update object
     const restaurantUpdate = {
       name,
       description,
-      contact: { email, phone },
+      ...(restaurantEmail && { 'contact.email': restaurantEmail }),
+      ...(restaurantPhone !== undefined && { 'contact.phone': restaurantPhone }),
       ...(address && { address })
     };
 
+    console.log('🏪 Final restaurant update object:', restaurantUpdate);
+
+    // Update restaurant
     const restaurant = await Restaurant.findByIdAndUpdate(
       id,
       restaurantUpdate,
@@ -2478,21 +2471,44 @@ app.put('/api/admin/restaurants/:id', adminAuth, async (req, res) => {
     }
 
     let adminUpdate = null;
+    let adminCredentialsUpdated = false;
 
     // Update admin credentials if requested and provided
     if (changeCredentials) {
+      console.log('👤 Processing admin credential changes...');
+      
       const adminUser = await User.findOne({
-        restaurant: id,
-        role: 'restaurant_admin'
+        restaurant: new mongoose.Types.ObjectId(id),
+        role: { $in: ['admin', 'restaurant_admin'] }
       });
+
+      console.log('🔍 Found admin user for update:', adminUser ? {
+        id: adminUser._id,
+        name: adminUser.name,
+        email: adminUser.email,
+        role: adminUser.role
+      } : 'No admin user found');
 
       if (adminUser) {
         const adminUpdateData = {};
-        if (adminName) adminUpdateData.name = adminName;
-        if (adminEmail) adminUpdateData.email = adminEmail;
+        
+        if (adminName && adminName !== adminUser.name) {
+          adminUpdateData.name = adminName;
+          console.log('📝 Admin name will be updated');
+        }
+        
+        if (adminEmail && adminEmail !== adminUser.email) {
+          adminUpdateData.email = adminEmail;
+          console.log('📧 Admin email will be updated');
+        }
+        
         if (adminPassword && adminPassword.length > 0) {
+          if (adminPassword.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+          }
           const hashedPassword = await bcrypt.hash(adminPassword, 10);
           adminUpdateData.password = hashedPassword;
+          console.log('🔐 Admin password will be updated');
         }
 
         // Only update if there are actual changes
@@ -2500,10 +2516,11 @@ app.put('/api/admin/restaurants/:id', adminAuth, async (req, res) => {
           adminUpdate = await User.findByIdAndUpdate(
             adminUser._id,
             adminUpdateData,
-            { new: true }
+            { new: true, runValidators: true }
           ).select('-password -__v');
           
-          console.log('✅ Admin credentials updated:', {
+          adminCredentialsUpdated = true;
+          console.log('✅ Admin credentials updated successfully:', {
             name: adminUpdate.name,
             email: adminUpdate.email,
             passwordChanged: !!adminPassword
@@ -2513,24 +2530,63 @@ app.put('/api/admin/restaurants/:id', adminAuth, async (req, res) => {
         }
       } else {
         console.log('❌ Admin user not found for restaurant');
+        return res.status(404).json({ 
+          error: 'Admin user not found for this restaurant',
+          details: 'Cannot update admin credentials without an existing admin user'
+        });
       }
     }
 
-    console.log('✅ Restaurant updated successfully:', restaurant.name);
-
-    res.json({
-      message: 'Restaurant updated successfully',
-      restaurant,
-      ...(adminUpdate && { admin: adminUpdate })
+    console.log('✅ Restaurant updated successfully:', {
+      name: restaurant.name,
+      email: restaurant.contact?.email,
+      phone: restaurant.contact?.phone
     });
+
+    // Build response
+    const response = {
+      message: 'Restaurant updated successfully',
+      restaurant: {
+        _id: restaurant._id,
+        name: restaurant.name,
+        description: restaurant.description,
+        contact: {
+          email: restaurant.contact?.email,
+          phone: restaurant.contact?.phone
+        },
+        address: restaurant.address,
+        isActive: restaurant.isActive,
+        createdAt: restaurant.createdAt,
+        updatedAt: restaurant.updatedAt
+      }
+    };
+
+    if (adminUpdate) {
+      response.admin = adminUpdate;
+      response.adminCredentialsUpdated = adminCredentialsUpdated;
+    }
+
+    console.log('📤 Sending final response:', response);
+    res.json(response);
   } catch (error) {
     console.error('❌ Failed to update restaurant:', error);
+    
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.join(', ') 
+      });
+    }
     
     if (error.code === 11000) {
       return res.status(400).json({ error: 'Email already exists' });
     }
     
-    res.status(500).json({ error: 'Failed to update restaurant', details: error.message });
+    res.status(500).json({ 
+      error: 'Failed to update restaurant', 
+      details: error.message 
+    });
   }
 });
 
@@ -2539,6 +2595,10 @@ app.put('/api/admin/restaurants/:id/toggle-active', adminAuth, async (req, res) 
   try {
     const { id } = req.params;
     
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid restaurant ID format' });
+    }
+
     const restaurant = await Restaurant.findById(id);
     if (!restaurant) {
       return res.status(404).json({ error: 'Restaurant not found' });
@@ -2559,372 +2619,18 @@ app.put('/api/admin/restaurants/:id/toggle-active', adminAuth, async (req, res) 
   }
 });
 
-// Reset restaurant admin password
-app.put('/api/admin/restaurants/:id/reset-password', adminAuth, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { newPassword } = req.body;
-
-    if (!newPassword || newPassword.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters long' });
-    }
-
-    // Find the restaurant admin user
-    const adminUser = await User.findOne({
-      restaurant: id,
-      role: 'restaurant_admin'
-    });
-
-    if (!adminUser) {
-      return res.status(404).json({ error: 'Admin user not found for this restaurant' });
-    }
-
-    // Update password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    adminUser.password = hashedPassword;
-    await adminUser.save();
-
-    console.log('✅ Admin password reset for restaurant:', id);
-
-    res.json({
-      message: 'Admin password reset successfully',
-      user: {
-        id: adminUser._id,
-        name: adminUser.name,
-        email: adminUser.email
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to reset password:', error);
-    res.status(500).json({ error: 'Failed to reset password', details: error.message });
-  }
-});
-
-// Get restaurant analytics
-app.get('/api/admin/restaurants/:id/analytics', adminAuth, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { period = '30d' } = req.query;
-
-    // Calculate date range
-    const now = new Date();
-    let startDate = new Date();
-    
-    switch (period) {
-      case '7d':
-        startDate.setDate(now.getDate() - 7);
-        break;
-      case '30d':
-        startDate.setDate(now.getDate() - 30);
-        break;
-      case '90d':
-        startDate.setDate(now.getDate() - 90);
-        break;
-      case '1y':
-        startDate.setFullYear(now.getFullYear() - 1);
-        break;
-      default:
-        startDate.setDate(now.getDate() - 30);
-    }
-
-    const [
-      restaurant,
-      totalOrders,
-      revenueResult,
-      activeUsers,
-      menuItems,
-      recentOrders,
-      ordersByStatus,
-      revenueByDay
-    ] = await Promise.all([
-      Restaurant.findById(id),
-      Order.countDocuments({
-        restaurant: id,
-        createdAt: { $gte: startDate }
-      }),
-      Order.aggregate([
-        {
-          $match: {
-            restaurant: new mongoose.Types.ObjectId(id),
-            paymentStatus: 'paid',
-            createdAt: { $gte: startDate }
-          }
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: '$totalAmount' }
-          }
-        }
-      ]),
-      User.countDocuments({ restaurant: id, isActive: true }),
-      MenuItem.countDocuments({ restaurant: id }),
-      Order.find({ restaurant: id })
-        .populate('items.menuItem', 'name')
-        .sort({ createdAt: -1 })
-        .limit(10),
-      Order.aggregate([
-        {
-          $match: {
-            restaurant: new mongoose.Types.ObjectId(id),
-            createdAt: { $gte: startDate }
-          }
-        },
-        {
-          $group: {
-            _id: '$status',
-            count: { $sum: 1 }
-          }
-        }
-      ]),
-      Order.aggregate([
-        {
-          $match: {
-            restaurant: new mongoose.Types.ObjectId(id),
-            paymentStatus: 'paid',
-            createdAt: { $gte: startDate }
-          }
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: {
-                format: '%Y-%m-%d',
-                date: '$createdAt'
-              }
-            },
-            revenue: { $sum: '$totalAmount' },
-            orders: { $sum: 1 }
-          }
-        },
-        { $sort: { _id: 1 } }
-      ])
-    ]);
-
-    if (!restaurant) {
-      return res.status(404).json({ error: 'Restaurant not found' });
-    }
-
-    const totalRevenue = revenueResult[0]?.total || 0;
-
-    const analytics = {
-      overview: {
-        totalOrders,
-        totalRevenue,
-        activeUsers,
-        menuItems,
-        averageOrderValue: totalOrders > 0 ? totalRevenue / totalOrders : 0
-      },
-      ordersByStatus: ordersByStatus.reduce((acc, item) => {
-        acc[item._id] = item.count;
-        return acc;
-      }, {}),
-      revenueTrend: revenueByDay,
-      recentOrders,
-      period: {
-        start: startDate,
-        end: now,
-        label: period
-      }
-    };
-
-    res.json({
-      message: 'Analytics retrieved successfully',
-      restaurant,
-      analytics
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch analytics:', error);
-    res.status(500).json({ error: 'Failed to fetch analytics', details: error.message });
-  }
-});
-
-// Get system-wide analytics
-app.get('/api/admin/analytics/overview', adminAuth, async (req, res) => {
-  try {
-    const [
-      totalRestaurants,
-      activeRestaurants,
-      totalUsers,
-      totalOrders,
-      revenueResult,
-      recentRegistrations
-    ] = await Promise.all([
-      Restaurant.countDocuments(),
-      Restaurant.countDocuments({ isActive: true }),
-      User.countDocuments(),
-      Order.countDocuments(),
-      Order.aggregate([
-        {
-          $match: { paymentStatus: 'paid' }
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: '$totalAmount' }
-          }
-        }
-      ]),
-      Restaurant.find()
-        .sort({ createdAt: -1 })
-        .limit(5)
-    ]);
-
-    res.json({
-      message: 'System analytics retrieved successfully',
-      analytics: {
-        totalRestaurants,
-        activeRestaurants,
-        inactiveRestaurants: totalRestaurants - activeRestaurants,
-        totalUsers,
-        totalOrders,
-        totalRevenue: revenueResult[0]?.total || 0,
-        recentRegistrations
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch system analytics:', error);
-    res.status(500).json({ error: 'Failed to fetch system analytics', details: error.message });
-  }
-});
-
-// ============================================================================
-// ADMIN PROFILE ENDPOINTS
-// ============================================================================
-
-// Get admin profile
-app.get('/api/admin/profile', adminAuth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.userId)
-      .select('-password -__v');
-
-    if (!user) {
-      return res.status(404).json({ error: 'Admin user not found' });
-    }
-
-    if (user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
-    res.json({
-      message: 'Admin profile retrieved successfully 23',
-      admin: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to fetch admin profile:', error);
-    res.status(500).json({ error: 'Failed to fetch admin profile', details: error.message });
-  }
-});
-
-// Update admin profile
-app.put('/api/admin/profile', adminAuth, async (req, res) => {
-  try {
-    const { name, email } = req.body;
-
-    console.log('👤 Updating admin profile:', req.user.userId);
-
-    const updateData = {};
-    if (name) updateData.name = name;
-    if (email) updateData.email = email;
-
-    const user = await User.findByIdAndUpdate(
-      req.user.userId,
-      updateData,
-      { new: true, runValidators: true }
-    ).select('-password -__v');
-
-    if (!user) {
-      return res.status(404).json({ error: 'the Admin user not found' });
-    }
-
-    if (user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
-    console.log('✅ Admin profile updated successfully');
-    
-    res.json({
-      message: 'Admin profile updated successfully',
-      admin: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
-  } catch (error) {
-    console.error('❌ Failed to update admin profile:', error);
-    
-    if (error.code === 11000) {
-      return res.status(400).json({ error: 'Email already exists' });
-    }
-    
-    res.status(500).json({ error: 'Failed to update admin profile', details: error.message });
-  }
-});
-
-// Change admin password
-app.put('/api/admin/change-password', adminAuth, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ error: 'Current password and new password are required' });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'New password must be at least 6 characters long' });
-    }
-
-    console.log('🔐 Changing admin password:', req.user.userId);
-
-    const user = await User.findById(req.user.userId);
-    if (!user) {
-      return res.status(404).json({ error: 'Admin user not found' });
-    }
-
-    if (user.role !== 'super_admin') {
-      return res.status(403).json({ error: 'Admin access required' });
-    }
-
-    // Verify current password
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
-    if (!isPasswordValid) {
-      return res.status(400).json({ error: 'Current password is incorrect' });
-    }
-
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    user.password = hashedPassword;
-    await user.save();
-
-    console.log('✅ Admin password changed successfully');
-    
-    res.json({
-      message: 'Password changed successfully'
-    });
-  } catch (error) {
-    console.error('❌ Failed to change admin password:', error);
-    res.status(500).json({ error: 'Failed to change password', details: error.message });
-  }
-});
-// ============================================================================
-// RESTAURANT ADMIN MANAGEMENT ROUTES
-// ============================================================================
-
 // Get restaurant admin user
 app.get('/api/admin/restaurants/:id/admin', adminAuth, async (req, res) => {
   try {
     const { id } = req.params;
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid restaurant ID format' });
+    }
+
     const adminUser = await User.findOne({
-      restaurant: id,
-      role: 'restaurant_admin'
+      restaurant: new mongoose.Types.ObjectId(id),
+      role: { $in: ['admin', 'restaurant_admin'] }
     }).select('-password -__v');
 
     if (!adminUser) {
@@ -2947,19 +2653,19 @@ app.put('/api/admin/restaurants/:id/admin', adminAuth, async (req, res) => {
     const { id } = req.params;
     const { name, email, password } = req.body;
 
-    console.log('👤 Updating restaurant admin credentials for restaurant:', id);
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid restaurant ID format' });
+    }
 
-    // Find the restaurant admin user
     const adminUser = await User.findOne({
-      restaurant: id,
-      role: 'restaurant_admin'
+      restaurant: new mongoose.Types.ObjectId(id),
+      role: { $in: ['admin', 'restaurant_admin'] }
     });
 
     if (!adminUser) {
       return res.status(404).json({ error: 'Admin user not found for this restaurant' });
     }
 
-    // Update fields if provided
     const updateData = {};
     if (name) updateData.name = name;
     if (email) updateData.email = email;
@@ -2977,8 +2683,6 @@ app.put('/api/admin/restaurants/:id/admin', adminAuth, async (req, res) => {
       { new: true, runValidators: true }
     ).select('-password -__v');
 
-    console.log('✅ Restaurant admin credentials updated successfully');
-
     res.json({
       message: 'Admin credentials updated successfully',
       admin: updatedUser
@@ -2994,7 +2698,760 @@ app.put('/api/admin/restaurants/:id/admin', adminAuth, async (req, res) => {
   }
 });
 
+// Get restaurant analytics
+app.get('/api/admin/restaurants/:id/analytics', adminAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { period = '30d' } = req.query;
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid restaurant ID format' });
+    }
+
+    // Calculate date range
+    const now = new Date();
+    let startDate = new Date();
+    
+    switch (period) {
+      case '7d': startDate.setDate(now.getDate() - 7); break;
+      case '30d': startDate.setDate(now.getDate() - 30); break;
+      case '90d': startDate.setDate(now.getDate() - 90); break;
+      case '1y': startDate.setFullYear(now.getFullYear() - 1); break;
+      default: startDate.setDate(now.getDate() - 30);
+    }
+
+    const [
+      restaurant,
+      totalOrders,
+      revenueResult,
+      activeUsers,
+      menuItems,
+      recentOrders
+    ] = await Promise.all([
+      Restaurant.findById(id),
+      Order.countDocuments({ restaurant: id, createdAt: { $gte: startDate } }),
+      Order.aggregate([
+        {
+          $match: {
+            restaurant: new mongoose.Types.ObjectId(id),
+            paymentStatus: 'paid',
+            createdAt: { $gte: startDate }
+          }
+        },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]),
+      User.countDocuments({ restaurant: id, isActive: true }),
+      MenuItem.countDocuments({ restaurant: id }),
+      Order.find({ restaurant: id })
+        .populate('items.menuItem', 'name')
+        .sort({ createdAt: -1 })
+        .limit(10)
+    ]);
+
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    const totalRevenue = revenueResult[0]?.total || 0;
+
+    const analytics = {
+      overview: {
+        totalOrders,
+        totalRevenue,
+        activeUsers,
+        menuItems,
+        averageOrderValue: totalOrders > 0 ? totalRevenue / totalOrders : 0
+      },
+      recentOrders,
+      period: { start: startDate, end: now, label: period }
+    };
+
+    res.json({
+      message: 'Analytics retrieved successfully',
+      restaurant,
+      analytics
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch analytics', details: error.message });
+  }
+});
+
+// Get system-wide analytics
+app.get('/api/admin/analytics/overview', adminAuth, async (req, res) => {
+  try {
+    const { period = '30d', restaurantId } = req.query;
+    
+    // Calculate date ranges
+    const now = new Date();
+    const currentPeriodStart = new Date();
+    const previousPeriodStart = new Date();
+    const allTimeStart = new Date('2020-01-01'); // System start date
+    
+    switch (period) {
+      case '7d':
+        currentPeriodStart.setDate(now.getDate() - 7);
+        previousPeriodStart.setDate(now.getDate() - 14);
+        break;
+      case '30d':
+        currentPeriodStart.setDate(now.getDate() - 30);
+        previousPeriodStart.setDate(now.getDate() - 60);
+        break;
+      case '90d':
+        currentPeriodStart.setDate(now.getDate() - 90);
+        previousPeriodStart.setDate(now.getDate() - 180);
+        break;
+      default:
+        currentPeriodStart.setDate(now.getDate() - 30);
+        previousPeriodStart.setDate(now.getDate() - 60);
+    }
+
+    // Build base query
+    const baseMatch = {};
+    if (restaurantId && restaurantId !== 'all') {
+      baseMatch.restaurant = new mongoose.Types.ObjectId(restaurantId);
+    }
+
+    // ✅ GET ALL METRICS
+    const [
+      // 1. Restaurant Metrics
+      totalRestaurantsCurrent,
+      activeRestaurantsCurrent,
+      
+      // 2. User Metrics by Role
+      superAdminCount,
+      adminCount,
+      staffCount,
+      
+      // 3. Customer Metrics
+      allCustomersResult,           // All unique customers ever
+      currentPeriodCustomersResult, // Customers in current period
+      previousPeriodCustomersResult, // Customers in previous period
+      
+      // 4. New vs Returning Customers Analysis
+      newCustomersResult,           // First-time customers in current period
+      returningCustomersResult,     // Returning customers in current period
+      
+      // 5. Order Metrics
+      totalOrdersCurrent,
+      revenueResultCurrent,
+      
+      // 6. Previous period for percentages
+      totalRestaurantsPrevious,
+      activeRestaurantsPrevious,
+      totalOrdersPrevious,
+      revenueResultPrevious,
+      
+      // 7. Monthly data for charts
+      monthlyRevenueResult,
+      monthlyCustomerGrowthResult,
+      monthlyActiveCustomersResult
+    ] = await Promise.all([
+      // CURRENT PERIOD
+      // 1. Restaurants
+      Restaurant.countDocuments(),
+      Restaurant.countDocuments({ isActive: true }),
+      
+      // 2. Users by Role
+      User.countDocuments({ role: 'super_admin' }),
+      User.countDocuments({ role: 'admin' }),
+      User.countDocuments({ role: 'staff' }),
+      
+      // 3. Customer Metrics - ALL TIME
+      Order.aggregate([
+        {
+          $match: {
+            ...baseMatch,
+            customerName: { $ne: '', $ne: null }
+          }
+        },
+        {
+          $group: {
+            _id: '$customerName',
+            firstOrder: { $min: '$createdAt' },
+            lastOrder: { $max: '$createdAt' },
+            totalOrders: { $sum: 1 },
+            totalSpent: { $sum: '$totalAmount' }
+          }
+        },
+        {
+          $count: 'count'
+        }
+      ]),
+      
+      // Customers in CURRENT PERIOD
+      Order.aggregate([
+        {
+          $match: {
+            ...baseMatch,
+            createdAt: { $gte: currentPeriodStart },
+            customerName: { $ne: '', $ne: null }
+          }
+        },
+        {
+          $group: {
+            _id: '$customerName'
+          }
+        },
+        {
+          $count: 'count'
+        }
+      ]),
+      
+      // Customers in PREVIOUS PERIOD
+      Order.aggregate([
+        {
+          $match: {
+            ...baseMatch,
+            createdAt: { 
+              $gte: previousPeriodStart,
+              $lt: currentPeriodStart 
+            },
+            customerName: { $ne: '', $ne: null }
+          }
+        },
+        {
+          $group: {
+            _id: '$customerName'
+          }
+        },
+        {
+          $count: 'count'
+        }
+      ]),
+      
+      // 4. NEW CUSTOMERS (first-time in current period)
+      Order.aggregate([
+        {
+          $match: {
+            ...baseMatch,
+            createdAt: { $gte: currentPeriodStart },
+            customerName: { $ne: '', $ne: null }
+          }
+        },
+        {
+          $group: {
+            _id: '$customerName',
+            firstOrderInPeriod: { $min: '$createdAt' }
+          }
+        },
+        {
+          $lookup: {
+            from: 'orders',
+            let: { customerName: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$customerName', '$$customerName'] },
+                      { $lt: ['$createdAt', currentPeriodStart] }
+                    ]
+                  }
+                }
+              }
+            ],
+            as: 'previousOrders'
+          }
+        },
+        {
+          $match: {
+            previousOrders: { $size: 0 } // No orders before current period = NEW customer
+          }
+        },
+        {
+          $count: 'count'
+        }
+      ]),
+      
+      // RETURNING CUSTOMERS (had orders before current period)
+      Order.aggregate([
+        {
+          $match: {
+            ...baseMatch,
+            createdAt: { $gte: currentPeriodStart },
+            customerName: { $ne: '', $ne: null }
+          }
+        },
+        {
+          $group: {
+            _id: '$customerName'
+          }
+        },
+        {
+          $lookup: {
+            from: 'orders',
+            let: { customerName: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ['$customerName', '$$customerName'] },
+                      { $lt: ['$createdAt', currentPeriodStart] }
+                    ]
+                  }
+                }
+              }
+            ],
+            as: 'previousOrders'
+          }
+        },
+        {
+          $match: {
+            previousOrders: { $gt: [{ $size: '$previousOrders' }, 0] } // Had orders before = RETURNING
+          }
+        },
+        {
+          $count: 'count'
+        }
+      ]),
+      
+      // 5. Order Metrics
+      Order.countDocuments({ 
+        ...baseMatch,
+        createdAt: { $gte: currentPeriodStart } 
+      }),
+      
+      Order.aggregate([
+        { 
+          $match: { 
+            ...baseMatch,
+            paymentStatus: 'paid',
+            createdAt: { $gte: currentPeriodStart }
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]),
+      
+      // PREVIOUS PERIOD
+      Restaurant.countDocuments({ createdAt: { $lt: currentPeriodStart } }),
+      Restaurant.countDocuments({ 
+        isActive: true,
+        createdAt: { $lt: currentPeriodStart } 
+      }),
+      Order.countDocuments({ 
+        ...baseMatch,
+        createdAt: { 
+          $gte: previousPeriodStart,
+          $lt: currentPeriodStart 
+        }
+      }),
+      Order.aggregate([
+        { 
+          $match: { 
+            ...baseMatch,
+            paymentStatus: 'paid',
+            createdAt: { 
+              $gte: previousPeriodStart,
+              $lt: currentPeriodStart 
+            }
+          } 
+        },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } }
+      ]),
+      
+      // 7. Monthly data for charts
+      // Monthly Revenue
+      Order.aggregate([
+        {
+          $match: {
+            ...baseMatch,
+            paymentStatus: 'paid',
+            createdAt: { $gte: currentPeriodStart }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' }
+            },
+            total: { $sum: '$totalAmount' },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1 } },
+        { $limit: 6 }
+      ]),
+      
+      // Monthly Customer Growth (New + Returning)
+      Order.aggregate([
+        {
+          $match: {
+            ...baseMatch,
+            createdAt: { $gte: currentPeriodStart },
+            customerName: { $ne: '', $ne: null }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' },
+              customerName: '$customerName'
+            }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: '$_id.year',
+              month: '$_id.month'
+            },
+            totalCustomers: { $sum: 1 }
+          }
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1 } },
+        { $limit: 6 }
+      ]),
+      
+      // Monthly Active Customers
+      Order.aggregate([
+        {
+          $match: {
+            ...baseMatch,
+            createdAt: { $gte: currentPeriodStart },
+            customerName: { $ne: '', $ne: null }
+          }
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: '$createdAt' },
+              month: { $month: '$createdAt' }
+            },
+            activeCustomers: { $addToSet: '$customerName' }
+          }
+        },
+        {
+          $project: {
+            activeCustomers: { $size: '$activeCustomers' }
+          }
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1 } },
+        { $limit: 6 }
+      ])
+    ]);
+
+    // ✅ CALCULATE TOTALS
+    const allCustomers = allCustomersResult[0]?.count || 0;
+    const currentPeriodCustomers = currentPeriodCustomersResult[0]?.count || 0;
+    const previousPeriodCustomers = previousPeriodCustomersResult[0]?.count || 0;
+    
+    const newCustomers = newCustomersResult[0]?.count || 0;
+    const returningCustomers = returningCustomersResult[0]?.count || 0;
+    
+    // Total Users = Customers + Restaurant Staff (admin + staff + super_admin)
+    const restaurantStaff = adminCount + staffCount + superAdminCount;
+    const totalUsersCurrent = allCustomers + restaurantStaff;
+    const totalUsersPrevious = (allCustomers - currentPeriodCustomers) + restaurantStaff;
+    
+    const totalRevenueCurrent = revenueResultCurrent[0]?.total || 0;
+    const totalRevenuePrevious = revenueResultPrevious[0]?.total || 0;
+    
+    // ✅ CALCULATE PERCENTAGE CHANGES
+    const calculatePercentage = (current, previous) => {
+      if (previous === 0) return current > 0 ? 100 : 0;
+      return ((current - previous) / previous) * 100;
+    };
+
+    const userPercentageChange = calculatePercentage(totalUsersCurrent, totalUsersPrevious);
+    const revenuePercentageChange = calculatePercentage(totalRevenueCurrent, totalRevenuePrevious);
+    
+    const activeRate = activeRestaurantsCurrent > 0 
+      ? (activeRestaurantsCurrent / totalRestaurantsCurrent) * 100 
+      : 0;
+    
+    const previousActiveRate = activeRestaurantsPrevious > 0 && totalRestaurantsPrevious > 0
+      ? (activeRestaurantsPrevious / totalRestaurantsPrevious) * 100
+      : 0;
+    
+    const activeRatePercentageChange = calculatePercentage(activeRate, previousActiveRate);
+
+    // Format monthly data
+    const monthlyRevenue = monthlyRevenueResult.map(item => ({
+      month: `${item._id.year}-${item._id.month.toString().padStart(2, '0')}`,
+      amount: item.total,
+      orders: item.count
+    }));
+
+    const monthlyCustomerGrowth = monthlyCustomerGrowthResult.map(item => ({
+      month: `${item._id.year}-${item._id.month.toString().padStart(2, '0')}`,
+      totalCustomers: item.totalCustomers
+    }));
+
+    const monthlyActiveCustomers = monthlyActiveCustomersResult.map(item => ({
+      month: `${item._id.year}-${item._id.month.toString().padStart(2, '0')}`,
+      activeCustomers: item.activeCustomers
+    }));
+
+    // Get all restaurants for filter dropdown
+    const allRestaurants = await Restaurant.find({})
+      .select('_id name')
+      .sort({ name: 1 });
+
+    res.json({
+      message: 'System analytics retrieved successfully',
+      analytics: {
+        // Basic metrics
+        totalRestaurants: totalRestaurantsCurrent,
+        activeRestaurants: activeRestaurantsCurrent,
+        inactiveRestaurants: totalRestaurantsCurrent - activeRestaurantsCurrent,
+        
+        // User breakdown - COMPLETE
+        totalUsers: totalUsersCurrent,
+        userBreakdown: {
+          allCustomers: allCustomers,                 // All unique customers ever
+          currentCustomers: currentPeriodCustomers,   // Customers in current period
+          newCustomers: newCustomers,                 // First-time customers in current period
+          returningCustomers: returningCustomers,     // Returning customers in current period
+          admins: adminCount,
+          staff: staffCount,
+          superAdmins: superAdminCount
+        },
+        
+        // Customer metrics
+        customerRetentionRate: currentPeriodCustomers > 0 
+          ? (returningCustomers / currentPeriodCustomers) * 100 
+          : 0,
+        
+        // Order metrics
+        totalOrders: totalOrdersCurrent,
+        totalRevenue: totalRevenueCurrent,
+        
+        // Percentage changes
+        percentageChanges: {
+          users: parseFloat(userPercentageChange.toFixed(1)),
+          revenue: parseFloat(revenuePercentageChange.toFixed(1)),
+          activeRate: parseFloat(activeRatePercentageChange.toFixed(1)),
+          customers: parseFloat(calculatePercentage(currentPeriodCustomers, previousPeriodCustomers).toFixed(1))
+        },
+        
+        // Chart data - REAL DATA
+        monthlyRevenue: monthlyRevenue,
+        userGrowth: monthlyCustomerGrowth,
+        activeUsers: monthlyActiveCustomers,
+        
+        // Period info
+        period: {
+          start: currentPeriodStart,
+          end: now,
+          label: period
+        },
+        
+        // Filter info
+        filter: {
+          restaurantId: restaurantId || 'all',
+          restaurantName: restaurantId && restaurantId !== 'all' 
+            ? allRestaurants.find(r => r._id.toString() === restaurantId)?.name 
+            : 'All Restaurants'
+        },
+        
+        // Available restaurants for filter
+        availableRestaurants: allRestaurants.map(r => ({
+          id: r._id,
+          name: r.name
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch system analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch system analytics', details: error.message });
+  }
+});
+// Get detailed user statistics
+app.get('/api/admin/analytics/users', adminAuth, async (req, res) => {
+  try {
+    const { period = '30d' } = req.query;
+    
+    const now = new Date();
+    const startDate = new Date();
+    startDate.setDate(now.getDate() - (period === '7d' ? 7 : 30));
+
+    // Get restaurant staff by role
+    const staffByRole = await User.aggregate([
+      {
+        $match: {
+          role: { $in: ['admin', 'staff'] },
+          createdAt: { $gte: startDate }
+        }
+      },
+      {
+        $group: {
+          _id: '$role',
+          count: { $sum: 1 },
+          restaurants: { $addToSet: '$restaurant' }
+        }
+      }
+    ]);
+
+    // Get top customers
+    const topCustomers = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+          customerName: { $ne: '', $ne: null },
+          paymentStatus: 'paid'
+        }
+      },
+      {
+        $group: {
+          _id: '$customerName',
+          orders: { $sum: 1 },
+          totalSpent: { $sum: '$totalAmount' },
+          avgOrderValue: { $avg: '$totalAmount' },
+          firstOrder: { $min: '$createdAt' },
+          lastOrder: { $max: '$createdAt' }
+        }
+      },
+      { $sort: { totalSpent: -1 } },
+      { $limit: 10 }
+    ]);
+
+    // Customer frequency distribution
+    const customerFrequency = await Order.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: startDate },
+          customerName: { $ne: '', $ne: null }
+        }
+      },
+      {
+        $group: {
+          _id: '$customerName',
+          orders: { $sum: 1 }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            $switch: {
+              branches: [
+                { case: { $lte: ['$orders', 1] }, then: 'One-time' },
+                { case: { $lte: ['$orders', 3] }, then: 'Occasional (2-3)' },
+                { case: { $lte: ['$orders', 10] }, then: 'Regular (4-10)' },
+                { case: { $gt: ['$orders', 10] }, then: 'Frequent (10+)' }
+              ],
+              default: 'One-time'
+            }
+          },
+          customers: { $sum: 1 },
+          totalOrders: { $sum: '$orders' }
+        }
+      }
+    ]);
+
+    // Format staff by role
+    const formattedStaff = {};
+    staffByRole.forEach(item => {
+      formattedStaff[item._id] = {
+        count: item.count,
+        restaurants: item.restaurants.length
+      };
+    });
+
+    res.json({
+      message: 'User analytics retrieved successfully',
+      analytics: {
+        period: { start: startDate, end: now, label: period },
+        
+        // Staff breakdown
+        staff: {
+          total: (formattedStaff.admin?.count || 0) + (formattedStaff.staff?.count || 0),
+          byRole: formattedStaff
+        },
+        
+        // Customer analytics
+        customers: {
+          topCustomers: topCustomers.map(customer => ({
+            name: customer._id,
+            orders: customer.orders,
+            totalSpent: customer.totalSpent,
+            avgOrderValue: customer.avgOrderValue,
+            firstOrder: customer.firstOrder,
+            lastOrder: customer.lastOrder
+          })),
+          frequencyDistribution: customerFrequency
+        }
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch user analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch user analytics', details: error.message });
+  }
+});
+
+// Admin profile endpoints
+app.get('/api/admin/profile', adminAuth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password -__v');
+    if (!user || user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    res.json({
+      message: 'Admin profile retrieved successfully',
+      admin: { id: user._id, name: user.name, email: user.email, role: user.role }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch admin profile:', error);
+    res.status(500).json({ error: 'Failed to fetch admin profile', details: error.message });
+  }
+});
+
+app.put('/api/admin/profile', adminAuth, async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { name, email },
+      { new: true, runValidators: true }
+    ).select('-password -__v');
+
+    if (!user || user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    res.json({
+      message: 'Admin profile updated successfully',
+      admin: { id: user._id, name: user.name, email: user.email, role: user.role }
+    });
+  } catch (error) {
+    console.error('❌ Failed to update admin profile:', error);
+    if (error.code === 11000) {
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+    res.status(500).json({ error: 'Failed to update admin profile', details: error.message });
+  }
+});
+
+app.put('/api/admin/change-password', adminAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Valid current and new password (min 6 chars) required' });
+    }
+
+    const user = await User.findById(req.user.userId);
+    if (!user || user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordValid) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('❌ Failed to change admin password:', error);
+    res.status(500).json({ error: 'Failed to change password', details: error.message });
+  }
+});
 // ============================================================================
 // PUBLIC RESTAURANT ENDPOINTS (for customer-facing app)
 // ============================================================================
