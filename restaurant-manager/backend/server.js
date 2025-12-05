@@ -3260,6 +3260,7 @@ app.get('/api/admin/analytics/overview', adminAuth, async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch system analytics', details: error.message });
   }
 });
+
 // Get detailed user statistics
 app.get('/api/admin/analytics/users', adminAuth, async (req, res) => {
   try {
