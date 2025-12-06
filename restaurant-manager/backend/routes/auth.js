@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 console.log('🔧 Loading models for auth route...');
-const User = require('../models/user');
+const User = require('../models/User');
 const Restaurant = require('../models/Restaurant'); // Add this import
 console.log('✅ Models loaded successfully');
 
