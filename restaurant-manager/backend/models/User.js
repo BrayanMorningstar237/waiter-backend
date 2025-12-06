@@ -22,7 +22,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  
+
   role: {
     type: String,
     enum: ['super_admin','admin', 'staff'],
@@ -45,4 +45,4 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ email: 1 });
 userSchema.index({ restaurant: 1 });
 
-module.exports = mongoose.model('User', userSchema);
+module.exports = mongoose.model('user', userSchema);
