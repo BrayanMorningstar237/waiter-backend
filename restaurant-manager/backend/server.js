@@ -13,7 +13,7 @@ const app = express();
 // Import models
 const Order = require('./models/Order');
 const Restaurant = require('./models/Restaurant');
-const User = require('./models/user');
+const User = require('./models/User');
 const Category = require('./models/Category');
 const MenuItem = require('./models/MenuItem');
 const Table = require('./models/Table');
