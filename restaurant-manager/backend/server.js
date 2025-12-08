@@ -189,6 +189,8 @@ const { auth } = require('./middleware/auth');
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 
+const paymentRoutes = require('./payment'); // relative path to payment.js
+app.use('/api', paymentRoutes);
 // ============================================================================
 // SSE ENDPOINTS
 // ============================================================================
@@ -1646,7 +1648,18 @@ app.get('/api/orders/:id', auth, async (req, res) => {
 // Create new order with SSE notifications
 app.post('/api/orders', async (req, res) => {
   try {
-    const { restaurant, customerName, table, items, totalAmount, orderType } = req.body;
+    const { 
+      restaurant, 
+      customerName, 
+      customerPhone,
+      customerEmail,
+      table, 
+      items, 
+      totalAmount, 
+      orderType,
+      paymentStatus,
+      paymentDetails // ✅ ADDED: Payment details from frontend
+    } = req.body;
 
     console.log('📦 Creating new order with data:', req.body);
 
@@ -1697,11 +1710,31 @@ app.post('/api/orders', async (req, res) => {
     const orderNumber = generateOrderNumber();
     console.log('🔢 Generated order number:', orderNumber);
 
+    // ✅ Build payment details object if provided
+    let paymentDetailsObj = null;
+    if (paymentDetails && paymentDetails.method) {
+      paymentDetailsObj = {
+        method: paymentDetails.method,
+        phoneNumber: paymentDetails.phoneNumber || '',
+        transactionId: paymentDetails.transactionId || '',
+        status: paymentDetails.status || 'completed',
+        amountPaid: totalAmount,
+        currency: 'CFA',
+        paymentProvider: paymentDetails.method.includes('MoMo') ? 'MTN' : 
+                        paymentDetails.method.includes('Orange') ? 'Orange' : 
+                        paymentDetails.method,
+        customerEmail: customerEmail || '',
+        notes: paymentDetails.notes || ''
+      };
+    }
+
     // Create order
     const order = new Order({
       orderNumber: orderNumber,
       restaurant,
       customerName: customerName.trim(),
+      customerPhone: customerPhone || '',
+      customerEmail: customerEmail || '',
       table: table || null,
       items: items.map(item => ({
         menuItem: item.menuItem,
@@ -1712,7 +1745,9 @@ app.post('/api/orders', async (req, res) => {
       totalAmount,
       orderType: orderType || 'dine-in',
       status: 'pending',
-      paymentStatus: 'pending'
+      paymentStatus: paymentStatus || (paymentDetails ? 'paid' : 'pending'),
+      paymentDetails: paymentDetailsObj, // ✅ ADDED
+      paidAt: paymentStatus === 'paid' || paymentDetails ? new Date() : null // ✅ ADDED
     });
 
     // Save the order
@@ -1729,6 +1764,15 @@ app.post('/api/orders', async (req, res) => {
     }
     
     console.log('✅ Order saved successfully with ID:', savedOrder._id);
+    
+    // Log payment details if present
+    if (paymentDetailsObj) {
+      console.log('💰 Payment details saved:', {
+        method: paymentDetailsObj.method,
+        transactionId: paymentDetailsObj.transactionId,
+        amount: paymentDetailsObj.amountPaid
+      });
+    }
 
     // Populate the order with all details including table
     const populatedOrder = await Order.findById(savedOrder._id)
@@ -1737,6 +1781,13 @@ app.post('/api/orders', async (req, res) => {
       .populate('table', 'tableNumber capacity status');
 
     console.log(`✅ New order created: ${populatedOrder.orderNumber} for ${customerName}`);
+    console.log(`💰 Payment Status: ${populatedOrder.paymentStatus}`);
+    if (populatedOrder.paymentDetails) {
+      console.log(`📱 Payment Method: ${populatedOrder.paymentDetails.method}`);
+      if (populatedOrder.paymentDetails.transactionId) {
+        console.log(`🔢 Transaction ID: ${populatedOrder.paymentDetails.transactionId}`);
+      }
+    }
     if (table) {
       console.log(`🪑 Table: ${populatedOrder.table?.tableNumber}`);
     }
