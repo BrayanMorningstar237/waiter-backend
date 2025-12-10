@@ -1098,9 +1098,10 @@ app.get('/api/restaurants/:id', async (req, res) => {
 // MENU ITEMS ROUTES
 // ============================================================================
 
+// Update the existing GET /api/menu-items endpoint
 app.get('/api/menu-items', auth, async (req, res) => {
   try {
-    const { categoryId } = req.query;
+    const { categoryId, includeAllDays = true } = req.query;
     const restaurantId = req.user.restaurant._id;
     
     console.log(`🔐 Fetching menu items for: ${req.user.restaurant.name} (${restaurantId})`);
@@ -1108,6 +1109,16 @@ app.get('/api/menu-items', auth, async (req, res) => {
     let query = { restaurant: restaurantId };
     
     if (categoryId) query.category = categoryId;
+    
+    // Only filter by availability if includeAllDays is false
+    if (includeAllDays === 'false') {
+      const today = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+      query.$or = [
+        { availableDays: { $in: [today] } },
+        { availableDays: { $size: 7 } },
+        { availableDays: { $exists: false } }
+      ];
+    }
 
     const menuItems = await MenuItem.find(query)
       .populate('category', 'name')
@@ -1828,7 +1839,254 @@ app.post('/api/orders', async (req, res) => {
     });
   }
 });
+// ============================================================================
+// MENU ITEM AVAILABILITY BY DAYS ENDPOINTS
+// ============================================================================
 
+// Update available days for a menu item (protected)
+app.put('/api/menu-items/:id/availability/days', auth, async (req, res) => {
+  try {
+    const { availableDays } = req.body;
+    
+    if (!Array.isArray(availableDays)) {
+      return res.status(400).json({ error: 'availableDays must be an array' });
+    }
+
+    // Validate days
+    const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const invalidDays = availableDays.filter(day => !validDays.includes(day));
+    
+    if (invalidDays.length > 0) {
+      return res.status(400).json({ 
+        error: 'Invalid days provided', 
+        invalidDays,
+        validDays 
+      });
+    }
+
+    const menuItem = await MenuItem.findOne({
+      _id: req.params.id,
+      restaurant: req.user.restaurant._id
+    });
+
+    if (!menuItem) {
+      return res.status(404).json({ error: 'Menu item not found or not authorized' });
+    }
+
+    menuItem.availableDays = availableDays;
+    await menuItem.save();
+
+    console.log(`📅 Updated available days for "${menuItem.name}" to:`, availableDays);
+    
+    res.json({
+      message: 'Available days updated successfully',
+      menuItem: {
+        id: menuItem._id,
+        name: menuItem.name,
+        availableDays: menuItem.availableDays
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to update available days:', error);
+    res.status(500).json({ error: 'Failed to update available days', details: error.message });
+  }
+});
+
+// Get menu items available today (public)
+app.get('/api/public/restaurants/:id/menu/today', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    
+    // Get current day name
+    const today = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    console.log(`📅 Fetching menu items available on ${today} for restaurant: ${restaurantId}`);
+    
+    // Verify restaurant exists and is active
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant || !restaurant.isActive) {
+      return res.status(404).json({ error: 'Restaurant not found or not available' });
+    }
+
+    // Find items available today OR items without specific day restrictions (all days)
+    const menuItems = await MenuItem.find({ 
+      restaurant: restaurantId,
+      isAvailable: true,
+      $or: [
+        { availableDays: { $in: [today] } },
+        { availableDays: { $size: 7 } }, // Items available all 7 days
+        { availableDays: { $exists: false } } // Backward compatibility
+      ]
+    })
+    .populate('category', 'name _id')
+    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway popularity viewCount availableDays')
+    .sort('category name');
+
+    console.log(`✅ Found ${menuItems.length} menu items available today (${today})`);
+    
+    // Convert to objects
+    const menuItemsWithVirtuals = menuItems.map(item => {
+      const itemObj = item.toObject({ virtuals: true });
+      
+      // Ensure takeaway structure exists
+      if (!itemObj.takeaway) {
+        itemObj.takeaway = {
+          isTakeawayAvailable: false,
+          takeawayPrice: itemObj.price,
+          packagingFee: 0,
+          takeawayOrdersCount: 0
+        };
+      }
+      
+      itemObj.totalTakeawayPrice = itemObj.takeaway.takeawayPrice + itemObj.takeaway.packagingFee;
+      itemObj.isTakeawayAvailable = itemObj.takeaway.isTakeawayAvailable;
+      
+      return itemObj;
+    });
+
+    res.json({
+      message: `Menu items available on ${today} retrieved successfully`,
+      today: today,
+      menuItems: menuItemsWithVirtuals,
+      restaurant: {
+        name: restaurant.name,
+        id: restaurant._id
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch today\'s menu:', error);
+    res.status(500).json({ error: 'Failed to fetch menu items', details: error.message });
+  }
+});
+
+// Get menu items available on specific day (public)
+app.get('/api/public/restaurants/:id/menu/day/:dayName', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    const dayName = req.params.dayName.toLowerCase();
+    
+    // Validate day name
+    const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    if (!validDays.includes(dayName)) {
+      return res.status(400).json({ 
+        error: 'Invalid day name',
+        validDays 
+      });
+    }
+
+    console.log(`📅 Fetching menu items available on ${dayName} for restaurant: ${restaurantId}`);
+    
+    // Verify restaurant exists and is active
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant || !restaurant.isActive) {
+      return res.status(404).json({ error: 'Restaurant not found or not available' });
+    }
+
+    // Find items available on specific day OR items without specific day restrictions
+    const menuItems = await MenuItem.find({ 
+      restaurant: restaurantId,
+      isAvailable: true,
+      $or: [
+        { availableDays: { $in: [dayName] } },
+        { availableDays: { $size: 7 } }, // Items available all 7 days
+        { availableDays: { $exists: false } } // Backward compatibility
+      ]
+    })
+    .populate('category', 'name _id')
+    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway popularity viewCount availableDays')
+    .sort('category name');
+
+    console.log(`✅ Found ${menuItems.length} menu items available on ${dayName}`);
+    
+    // Convert to objects
+    const menuItemsWithVirtuals = menuItems.map(item => {
+      const itemObj = item.toObject({ virtuals: true });
+      
+      // Ensure takeaway structure exists
+      if (!itemObj.takeaway) {
+        itemObj.takeaway = {
+          isTakeawayAvailable: false,
+          takeawayPrice: itemObj.price,
+          packagingFee: 0,
+          takeawayOrdersCount: 0
+        };
+      }
+      
+      itemObj.totalTakeawayPrice = itemObj.takeaway.takeawayPrice + itemObj.takeaway.packagingFee;
+      itemObj.isTakeawayAvailable = itemObj.takeaway.isTakeawayAvailable;
+      
+      return itemObj;
+    });
+
+    res.json({
+      message: `Menu items available on ${dayName} retrieved successfully`,
+      day: dayName,
+      menuItems: menuItemsWithVirtuals,
+      restaurant: {
+        name: restaurant.name,
+        id: restaurant._id
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch menu by day:', error);
+    res.status(500).json({ error: 'Failed to fetch menu items', details: error.message });
+  }
+});
+
+// Get all menu items with their availability schedule (protected)
+app.get('/api/menu-items/availability', auth, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant._id;
+    
+    console.log(`📅 Fetching availability schedule for restaurant: ${req.user.restaurant.name}`);
+    
+    const menuItems = await MenuItem.find({ 
+      restaurant: restaurantId 
+    })
+    .populate('category', 'name')
+    .select('name category isAvailable availableDays')
+    .sort('category name');
+
+    // Group by category
+    const groupedItems = {};
+    menuItems.forEach(item => {
+      const categoryName = item.category?.name || 'Uncategorized';
+      if (!groupedItems[categoryName]) {
+        groupedItems[categoryName] = [];
+      }
+      
+      // Check if item is available today
+      const today = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+      const isAvailableToday = item.availableDays?.includes(today) || 
+                              !item.availableDays || 
+                              item.availableDays.length === 7;
+      
+      groupedItems[categoryName].push({
+        id: item._id,
+        name: item.name,
+        isAvailable: item.isAvailable,
+        availableDays: item.availableDays || ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+        isAvailableToday: isAvailableToday && item.isAvailable
+      });
+    });
+
+    // Convert to array format
+    const availabilitySchedule = Object.keys(groupedItems).map(category => ({
+      category,
+      items: groupedItems[category]
+    }));
+
+    console.log(`✅ Availability schedule retrieved for ${menuItems.length} items across ${availabilitySchedule.length} categories`);
+    
+    res.json({
+      message: 'Availability schedule retrieved successfully',
+      schedule: availabilitySchedule,
+      today: new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase()
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch availability schedule:', error);
+    res.status(500).json({ error: 'Failed to fetch availability schedule', details: error.message });
+  }
+});
 // Update order status with SSE notification
 app.put('/api/orders/:id/status', auth, async (req, res) => {
   try {

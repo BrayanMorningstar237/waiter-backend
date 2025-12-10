@@ -46,6 +46,13 @@ userViews: [{
   lastViewed: Date,
   viewCount: Number
 }],
+availableDays: {
+  type: [{
+    type: String,
+    enum: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+  }],
+  default: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+},
   allergens: [{
     type: String,
     trim: true
