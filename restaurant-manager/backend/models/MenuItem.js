@@ -46,12 +46,21 @@ userViews: [{
   lastViewed: Date,
   viewCount: Number
 }],
+// Make sure your availableDays field looks like this:
 availableDays: {
   type: [{
     type: String,
     enum: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
   }],
-  default: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+  default: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+  validate: {
+    validator: function(days) {
+      // Ensure all days are valid
+      const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      return days.every(day => validDays.includes(day));
+    },
+    message: props => `${props.value} contains invalid day names`
+  }
 },
   allergens: [{
     type: String,
