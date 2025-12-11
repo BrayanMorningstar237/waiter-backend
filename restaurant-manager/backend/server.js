@@ -4133,7 +4133,9 @@ app.get('/api/public/restaurants/:id/menu', async (req, res) => {
   try {
     const restaurantId = req.params.id;
     
-    console.log(`📋 Fetching public menu for restaurant: ${restaurantId}`);
+    // Get current day name
+    const today = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    console.log(`📅 Fetching ALL menu items for restaurant: ${restaurantId}, today is ${today}`);
     
     // Verify restaurant exists and is active
     const restaurant = await Restaurant.findById(restaurantId);
@@ -4141,22 +4143,40 @@ app.get('/api/public/restaurants/:id/menu', async (req, res) => {
       return res.status(404).json({ error: 'Restaurant not found or not available' });
     }
 
-    // Get available menu items with new fields
+    // Fetch ALL menu items (both available and temporarily unavailable)
     const menuItems = await MenuItem.find({ 
-      restaurant: restaurantId,
-      isAvailable: true 
+      restaurant: restaurantId
+      // Removed isAvailable filter to show all items
     })
     .populate('category', 'name _id')
-    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway popularity viewCount')
+    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway popularity viewCount availableDays')
     .sort('category name');
 
-    console.log(`✅ Found ${menuItems.length} available menu items`);
+    console.log(`✅ Found ${menuItems.length} total menu items`);
     
-    // Convert to objects to include virtual fields and add calculated fields
-    const menuItemsWithVirtuals = menuItems.map(item => {
+    // Convert to objects and add availability flag for today
+    const menuItemsWithAvailability = menuItems.map(item => {
       const itemObj = item.toObject({ virtuals: true });
       
-      // Ensure takeaway structure exists and add calculated fields
+      // Check if item is available today
+      const availableDays = itemObj.availableDays || [];
+      let isAvailableToday;
+      
+      if (!itemObj.isAvailable) {
+        // If item is marked as not available overall
+        isAvailableToday = false;
+      } else if (availableDays.length === 0 || availableDays.length === 7) {
+        // No day restrictions or available all 7 days
+        isAvailableToday = true;
+      } else {
+        // Check if today is in availableDays
+        isAvailableToday = availableDays.includes(today);
+      }
+      
+      // Add availability flag
+      itemObj.isAvailableToday = isAvailableToday;
+      
+      // Ensure takeaway structure exists
       if (!itemObj.takeaway) {
         itemObj.takeaway = {
           isTakeawayAvailable: false,
@@ -4166,27 +4186,34 @@ app.get('/api/public/restaurants/:id/menu', async (req, res) => {
         };
       }
       
-      // Calculate total takeaway price (item price + packaging fee)
       itemObj.totalTakeawayPrice = itemObj.takeaway.takeawayPrice + itemObj.takeaway.packagingFee;
-      
-      // Add a convenience field for frontend
       itemObj.isTakeawayAvailable = itemObj.takeaway.isTakeawayAvailable;
-      
-      console.log(`🍱 ${itemObj.name}: Regular $${itemObj.price}, Takeaway $${itemObj.totalTakeawayPrice} (Available: ${itemObj.isTakeawayAvailable})`);
       
       return itemObj;
     });
 
+    // Count available vs unavailable items
+    const availableCount = menuItemsWithAvailability.filter(item => item.isAvailableToday).length;
+    const unavailableCount = menuItemsWithAvailability.length - availableCount;
+    
+    console.log(`📊 Today's availability: ${availableCount} available, ${unavailableCount} not available today`);
+    
     res.json({
-      message: 'Menu items retrieved successfully',
-      menuItems: menuItemsWithVirtuals,
+      message: `Menu items retrieved successfully with today's availability`,
+      today: today,
+      menuItems: menuItemsWithAvailability,
+      availabilitySummary: {
+        total: menuItemsWithAvailability.length,
+        availableToday: availableCount,
+        unavailableToday: unavailableCount
+      },
       restaurant: {
         name: restaurant.name,
         id: restaurant._id
       }
     });
   } catch (error) {
-    console.error('❌ Failed to fetch restaurant menu:', error);
+    console.error('❌ Failed to fetch menu items:', error);
     res.status(500).json({ error: 'Failed to fetch menu items', details: error.message });
   }
 });
