@@ -1958,6 +1958,66 @@ app.get('/api/public/restaurants/:id/menu/today', async (req, res) => {
   }
 });
 
+// New endpoint: Get all menu items with today's availability flag
+app.get('/api/public/restaurants/:id/menu/all-with-availability', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    const today = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    
+    // Fetch ALL menu items
+    const menuItems = await MenuItem.find({ 
+      restaurant: restaurantId,
+      isAvailable: true
+    })
+    .populate('category', 'name _id')
+    .select('name description price image ingredients preparationTime isVegetarian isVegan isGlutenFree spiceLevel category isAvailable rating nutrition likes takeaway popularity viewCount availableDays')
+    .sort('category name');
+
+    // Add today's availability flag
+    const menuItemsWithAvailability = menuItems.map(item => {
+      const itemObj = item.toObject({ virtuals: true });
+      
+      const availableDays = itemObj.availableDays || [];
+      let isAvailableToday;
+      
+      if (availableDays.length === 0 || availableDays.length === 7) {
+        isAvailableToday = true;
+      } else {
+        isAvailableToday = availableDays.includes(today);
+      }
+      
+      itemObj.isAvailableToday = isAvailableToday;
+      
+      // Takeaway structure
+      if (!itemObj.takeaway) {
+        itemObj.takeaway = {
+          isTakeawayAvailable: false,
+          takeawayPrice: itemObj.price,
+          packagingFee: 0,
+          takeawayOrdersCount: 0
+        };
+      }
+      
+      itemObj.totalTakeawayPrice = itemObj.takeaway.takeawayPrice + itemObj.takeaway.packagingFee;
+      itemObj.isTakeawayAvailable = itemObj.takeaway.isTakeawayAvailable;
+      
+      return itemObj;
+    });
+
+    res.json({
+      message: `All menu items with today's availability`,
+      today: today,
+      menuItems: menuItemsWithAvailability,
+      restaurant: {
+        name: restaurant.name,
+        id: restaurant._id
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch menu items with availability:', error);
+    res.status(500).json({ error: 'Failed to fetch menu items', details: error.message });
+  }
+});
 // Get menu items available on specific day (public)
 app.get('/api/public/restaurants/:id/menu/day/:dayName', async (req, res) => {
   try {
