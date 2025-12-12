@@ -1625,111 +1625,191 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
 });
 
 // Create menu item (protected)
-// Create menu item (protected) - FIXED VERSION
 app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
-    console.log('📦 Creating menu item with data:', req.body);
-    console.log('📁 Files:', req.file);
+    console.log('🚀 =========== CREATE MENU ITEM REQUEST ===========');
+    console.log('📦 Raw request body:', JSON.stringify(req.body, null, 2));
+    console.log('📦 Query parameters:', JSON.stringify(req.query, null, 2));
+    console.log('📁 File received:', req.file ? req.file.filename : 'No file');
     console.log('🏪 Restaurant:', req.user.restaurant.name);
-
-    // Check if data is coming as JSON string in 'data' field
-    let menuItemData;
-    if (req.body.data) {
-      // Parse JSON data from 'data' field
+    console.log('🏪 Restaurant ID:', req.user.restaurant._id);
+    
+    // Try multiple ways to get the data
+    let menuItemData = {};
+    
+    // 1. Check if data is in query parameters (GET-style)
+    if (Object.keys(req.query).length > 0) {
+      console.log('📦 Data from query parameters');
+      menuItemData = { ...req.query };
+    }
+    // 2. Check if data is in request body as JSON string in 'data' field
+    else if (req.body.data) {
       try {
+        console.log('📦 Data from "data" field');
         menuItemData = JSON.parse(req.body.data);
-        console.log('📦 Parsed data from "data" field:', menuItemData);
       } catch (parseError) {
         console.error('❌ Failed to parse JSON data:', parseError);
-        return res.status(400).json({ error: 'Invalid JSON data in "data" field' });
+        return res.status(400).json({ 
+          error: 'Invalid JSON data in "data" field',
+          details: parseError.message 
+        });
       }
-    } else {
-      // Use regular form data
+    }
+    // 3. Check if data is directly in request body
+    else if (Object.keys(req.body).length > 0) {
+      console.log('📦 Data directly in request body');
       menuItemData = req.body;
     }
+    
+    console.log('📦 Extracted menu item data:', JSON.stringify(menuItemData, null, 2));
 
-    // Log the availableDays if present
-    if (menuItemData.availableDays) {
-      console.log('📅 Available days in request:', menuItemData.availableDays);
+    // VALIDATION - Basic required fields
+    if (!menuItemData.name) {
+      console.error('❌ Missing name field');
+      return res.status(400).json({ error: 'Menu item name is required' });
+    }
+    
+    if (!menuItemData.price) {
+      console.error('❌ Missing price field');
+      return res.status(400).json({ error: 'Menu item price is required' });
+    }
+    
+    if (!menuItemData.category) {
+      console.error('❌ Missing category field');
+      return res.status(400).json({ error: 'Menu item category is required' });
     }
 
-    // Validate required fields
-    if (!menuItemData.name || !menuItemData.price || !menuItemData.category) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: name, price, and category are required' 
-      });
+    // Parse price as number
+    const price = Number(menuItemData.price);
+    if (isNaN(price) || price <= 0) {
+      console.error('❌ Invalid price:', menuItemData.price);
+      return res.status(400).json({ error: 'Price must be a positive number' });
     }
 
-    // Parse ingredients if it's a string
-    let ingredientsArray = [];
+    // Build the menu item object with defaults
+    const finalMenuItemData = {
+      name: menuItemData.name.toString().trim(),
+      description: (menuItemData.description || '').toString().trim(),
+      price: price,
+      category: menuItemData.category.toString().trim(),
+      restaurant: req.user.restaurant._id,
+      ingredients: [],
+      preparationTime: 15,
+      spiceLevel: 0,
+      isVegetarian: false,
+      isVegan: false,
+      isGlutenFree: false,
+      isAvailable: true,
+      availableDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+      rating: {
+        average: 0,
+        count: 0,
+        distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+      },
+      nutrition: {
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+        fiber: 0,
+        sugar: 0,
+        sodium: 0
+      },
+      takeaway: {
+        isTakeawayAvailable: false,
+        takeawayPrice: price,
+        packagingFee: 0,
+        takeawayOrdersCount: 0
+      }
+    };
+
+    // Override defaults with provided data
+    if (menuItemData.description !== undefined) {
+      finalMenuItemData.description = menuItemData.description.toString().trim();
+    }
+    
     if (menuItemData.ingredients) {
       if (typeof menuItemData.ingredients === 'string') {
-        ingredientsArray = menuItemData.ingredients.split(',').map(ing => ing.trim()).filter(ing => ing);
+        finalMenuItemData.ingredients = menuItemData.ingredients
+          .split(',')
+          .map(ing => ing.trim())
+          .filter(ing => ing);
       } else if (Array.isArray(menuItemData.ingredients)) {
-        ingredientsArray = menuItemData.ingredients;
+        finalMenuItemData.ingredients = menuItemData.ingredients;
+      }
+    }
+    
+    if (menuItemData.preparationTime !== undefined) {
+      finalMenuItemData.preparationTime = Number(menuItemData.preparationTime) || 15;
+    }
+    
+    if (menuItemData.spiceLevel !== undefined) {
+      finalMenuItemData.spiceLevel = Number(menuItemData.spiceLevel) || 0;
+    }
+    
+    if (menuItemData.isVegetarian !== undefined) {
+      finalMenuItemData.isVegetarian = menuItemData.isVegetarian === 'true' || menuItemData.isVegetarian === true;
+    }
+    
+    if (menuItemData.isVegan !== undefined) {
+      finalMenuItemData.isVegan = menuItemData.isVegan === 'true' || menuItemData.isVegan === true;
+    }
+    
+    if (menuItemData.isGlutenFree !== undefined) {
+      finalMenuItemData.isGlutenFree = menuItemData.isGlutenFree === 'true' || menuItemData.isGlutenFree === true;
+    }
+    
+    if (menuItemData.isAvailable !== undefined) {
+      finalMenuItemData.isAvailable = menuItemData.isAvailable === 'true' || menuItemData.isAvailable === true;
+    }
+    
+    if (menuItemData.availableDays && Array.isArray(menuItemData.availableDays)) {
+      finalMenuItemData.availableDays = menuItemData.availableDays;
+    } else if (menuItemData.availableDays && typeof menuItemData.availableDays === 'string') {
+      try {
+        finalMenuItemData.availableDays = JSON.parse(menuItemData.availableDays);
+      } catch (e) {
+        console.warn('⚠️ Could not parse availableDays string, using default');
       }
     }
 
-    // Parse takeaway data
-    let takeawayData = {};
+    // Handle takeaway data
     if (menuItemData.takeaway) {
-      takeawayData = {
-        isTakeawayAvailable: menuItemData.takeaway.isTakeawayAvailable || false,
-        takeawayPrice: menuItemData.takeaway.takeawayPrice || Number(menuItemData.price),
-        packagingFee: menuItemData.takeaway.packagingFee || 0
+      finalMenuItemData.takeaway = {
+        isTakeawayAvailable: menuItemData.takeaway.isTakeawayAvailable === 'true' || menuItemData.takeaway.isTakeawayAvailable === true,
+        takeawayPrice: Number(menuItemData.takeaway.takeawayPrice) || price,
+        packagingFee: Number(menuItemData.takeaway.packagingFee) || 0,
+        takeawayOrdersCount: 0
       };
-    } else {
-      // Backward compatibility
-      takeawayData = {
-        isTakeawayAvailable: menuItemData.isTakeawayAvailable || false,
-        takeawayPrice: menuItemData.takeawayPrice || Number(menuItemData.price),
-        packagingFee: menuItemData.packagingFee || 0
-      };
+    } else if (menuItemData.isTakeawayAvailable !== undefined) {
+      finalMenuItemData.takeaway.isTakeawayAvailable = menuItemData.isTakeawayAvailable === 'true' || menuItemData.isTakeawayAvailable === true;
+      if (menuItemData.takeawayPrice !== undefined) {
+        finalMenuItemData.takeaway.takeawayPrice = Number(menuItemData.takeawayPrice) || price;
+      }
+      if (menuItemData.packagingFee !== undefined) {
+        finalMenuItemData.takeaway.packagingFee = Number(menuItemData.packagingFee) || 0;
+      }
     }
 
-    // Parse nutrition data
-    let nutritionData = {};
+    // Handle nutrition data
     if (menuItemData.nutrition) {
-      nutritionData = {
-        calories: menuItemData.nutrition.calories || 0,
-        protein: menuItemData.nutrition.protein || 0,
-        carbs: menuItemData.nutrition.carbs || 0,
-        fat: menuItemData.nutrition.fat || 0,
-        fiber: menuItemData.nutrition.fiber || 0,
-        sugar: menuItemData.nutrition.sugar || 0,
-        sodium: menuItemData.nutrition.sodium || 0
+      const nutrition = menuItemData.nutrition;
+      finalMenuItemData.nutrition = {
+        calories: Number(nutrition.calories) || 0,
+        protein: Number(nutrition.protein) || 0,
+        carbs: Number(nutrition.carbs) || 0,
+        fat: Number(nutrition.fat) || 0,
+        fiber: Number(nutrition.fiber) || 0,
+        sugar: Number(nutrition.sugar) || 0,
+        sodium: Number(nutrition.sodium) || 0
       };
     } else {
-      // Backward compatibility
-      nutritionData = {
-        calories: menuItemData.calories || 0,
-        protein: menuItemData.protein || 0,
-        carbs: menuItemData.carbs || 0,
-        fat: menuItemData.fat || 0,
-        fiber: menuItemData.fiber || 0,
-        sugar: menuItemData.sugar || 0,
-        sodium: menuItemData.sodium || 0
-      };
+      // Check for flat nutrition fields
+      if (menuItemData.calories !== undefined) finalMenuItemData.nutrition.calories = Number(menuItemData.calories) || 0;
+      if (menuItemData.protein !== undefined) finalMenuItemData.nutrition.protein = Number(menuItemData.protein) || 0;
+      if (menuItemData.carbs !== undefined) finalMenuItemData.nutrition.carbs = Number(menuItemData.carbs) || 0;
+      if (menuItemData.fat !== undefined) finalMenuItemData.nutrition.fat = Number(menuItemData.fat) || 0;
     }
-
-    // Build the menu item object
-    const finalMenuItemData = {
-      name: menuItemData.name.trim(),
-      description: menuItemData.description || '',
-      price: Number(menuItemData.price),
-      category: menuItemData.category,
-      restaurant: req.user.restaurant._id,
-      ingredients: ingredientsArray,
-      preparationTime: Number(menuItemData.preparationTime) || 15,
-      spiceLevel: Number(menuItemData.spiceLevel) || 0,
-      isVegetarian: Boolean(menuItemData.isVegetarian),
-      isVegan: Boolean(menuItemData.isVegan),
-      isGlutenFree: Boolean(menuItemData.isGlutenFree),
-      isAvailable: menuItemData.isAvailable !== undefined ? Boolean(menuItemData.isAvailable) : true,
-      availableDays: menuItemData.availableDays || ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
-      nutrition: nutritionData,
-      takeaway: takeawayData
-    };
 
     // Handle image
     if (req.file) {
@@ -1737,7 +1817,7 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
       console.log('📸 Image uploaded to Cloudinary:', req.file.path);
     }
 
-    console.log('✅ Processed menu item data:', JSON.stringify(finalMenuItemData, null, 2));
+    console.log('✅ Final menu item data to save:', JSON.stringify(finalMenuItemData, null, 2));
 
     // Create and save menu item
     const menuItem = new MenuItem(finalMenuItemData);
@@ -1750,15 +1830,17 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
 
     console.log('✅ Menu item created successfully:', populatedItem.name);
     console.log('📅 Available days saved:', populatedItem.availableDays);
+    console.log('🚀 =========== REQUEST COMPLETE ===========\n');
     
     res.status(201).json({
       message: 'Menu item created successfully',
       menuItem: populatedItem
     });
   } catch (error) {
-    console.error('❌ Failed to create menu item:', error);
+    console.error('❌ =========== CREATE MENU ITEM ERROR ===========');
+    console.error('❌ Error:', error);
+    console.error('❌ Stack:', error.stack);
     
-    // More detailed error logging
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
       console.error('📝 Validation errors:', errors);
@@ -1768,154 +1850,7 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
       });
     }
     
-    res.status(500).json({ 
-      error: 'Failed to create menu item', 
-      details: error.message 
-    });
-  }
-});// Create menu item (protected) - FIXED VERSION
-app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, res) => {
-  try {
-    console.log('📦 Creating menu item with data:', req.body);
-    console.log('📁 Files:', req.file);
-    console.log('🏪 Restaurant:', req.user.restaurant.name);
-
-    // Check if data is coming as JSON string in 'data' field
-    let menuItemData;
-    if (req.body.data) {
-      // Parse JSON data from 'data' field
-      try {
-        menuItemData = JSON.parse(req.body.data);
-        console.log('📦 Parsed data from "data" field:', menuItemData);
-      } catch (parseError) {
-        console.error('❌ Failed to parse JSON data:', parseError);
-        return res.status(400).json({ error: 'Invalid JSON data in "data" field' });
-      }
-    } else {
-      // Use regular form data
-      menuItemData = req.body;
-    }
-
-    // Log the availableDays if present
-    if (menuItemData.availableDays) {
-      console.log('📅 Available days in request:', menuItemData.availableDays);
-    }
-
-    // Validate required fields
-    if (!menuItemData.name || !menuItemData.price || !menuItemData.category) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: name, price, and category are required' 
-      });
-    }
-
-    // Parse ingredients if it's a string
-    let ingredientsArray = [];
-    if (menuItemData.ingredients) {
-      if (typeof menuItemData.ingredients === 'string') {
-        ingredientsArray = menuItemData.ingredients.split(',').map(ing => ing.trim()).filter(ing => ing);
-      } else if (Array.isArray(menuItemData.ingredients)) {
-        ingredientsArray = menuItemData.ingredients;
-      }
-    }
-
-    // Parse takeaway data
-    let takeawayData = {};
-    if (menuItemData.takeaway) {
-      takeawayData = {
-        isTakeawayAvailable: menuItemData.takeaway.isTakeawayAvailable || false,
-        takeawayPrice: menuItemData.takeaway.takeawayPrice || Number(menuItemData.price),
-        packagingFee: menuItemData.takeaway.packagingFee || 0
-      };
-    } else {
-      // Backward compatibility
-      takeawayData = {
-        isTakeawayAvailable: menuItemData.isTakeawayAvailable || false,
-        takeawayPrice: menuItemData.takeawayPrice || Number(menuItemData.price),
-        packagingFee: menuItemData.packagingFee || 0
-      };
-    }
-
-    // Parse nutrition data
-    let nutritionData = {};
-    if (menuItemData.nutrition) {
-      nutritionData = {
-        calories: menuItemData.nutrition.calories || 0,
-        protein: menuItemData.nutrition.protein || 0,
-        carbs: menuItemData.nutrition.carbs || 0,
-        fat: menuItemData.nutrition.fat || 0,
-        fiber: menuItemData.nutrition.fiber || 0,
-        sugar: menuItemData.nutrition.sugar || 0,
-        sodium: menuItemData.nutrition.sodium || 0
-      };
-    } else {
-      // Backward compatibility
-      nutritionData = {
-        calories: menuItemData.calories || 0,
-        protein: menuItemData.protein || 0,
-        carbs: menuItemData.carbs || 0,
-        fat: menuItemData.fat || 0,
-        fiber: menuItemData.fiber || 0,
-        sugar: menuItemData.sugar || 0,
-        sodium: menuItemData.sodium || 0
-      };
-    }
-
-    // Build the menu item object
-    const finalMenuItemData = {
-      name: menuItemData.name.trim(),
-      description: menuItemData.description || '',
-      price: Number(menuItemData.price),
-      category: menuItemData.category,
-      restaurant: req.user.restaurant._id,
-      ingredients: ingredientsArray,
-      preparationTime: Number(menuItemData.preparationTime) || 15,
-      spiceLevel: Number(menuItemData.spiceLevel) || 0,
-      isVegetarian: Boolean(menuItemData.isVegetarian),
-      isVegan: Boolean(menuItemData.isVegan),
-      isGlutenFree: Boolean(menuItemData.isGlutenFree),
-      isAvailable: menuItemData.isAvailable !== undefined ? Boolean(menuItemData.isAvailable) : true,
-      availableDays: menuItemData.availableDays || ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
-      nutrition: nutritionData,
-      takeaway: takeawayData
-    };
-
-    // Handle image
-    if (req.file) {
-      finalMenuItemData.image = req.file.path;
-      console.log('📸 Image uploaded to Cloudinary:', req.file.path);
-    }
-
-    console.log('✅ Processed menu item data:', JSON.stringify(finalMenuItemData, null, 2));
-
-    // Create and save menu item
-    const menuItem = new MenuItem(finalMenuItemData);
-    const savedItem = await menuItem.save();
-    
-    // Populate category and restaurant
-    const populatedItem = await MenuItem.findById(savedItem._id)
-      .populate('category', 'name')
-      .populate('restaurant', 'name');
-
-    console.log('✅ Menu item created successfully:', populatedItem.name);
-    console.log('📅 Available days saved:', populatedItem.availableDays);
-    
-    res.status(201).json({
-      message: 'Menu item created successfully',
-      menuItem: populatedItem
-    });
-  } catch (error) {
-    console.error('❌ Failed to create menu item:', error);
-    
-    // More detailed error logging
-    if (error.name === 'ValidationError') {
-      const errors = Object.values(error.errors).map(err => err.message);
-      console.error('📝 Validation errors:', errors);
-      return res.status(400).json({ 
-        error: 'Validation failed', 
-        details: errors.join(', ') 
-      });
-    }
-    
+    console.error('❌ =========== ERROR END ===========\n');
     res.status(500).json({ 
       error: 'Failed to create menu item', 
       details: error.message 
