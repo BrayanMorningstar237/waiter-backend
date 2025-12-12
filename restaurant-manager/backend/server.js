@@ -109,7 +109,48 @@ const logoStorage = new CloudinaryStorage({
     ]
   }
 });
+// Add this configuration with the other Cloudinary storage configs (around line 115)
+const restaurantPhotosStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'restaurant-photos',
+    format: async (req, file) => {
+      const format = file.mimetype.split('/')[1];
+      return format === 'jpeg' ? 'jpg' : format;
+    },
+    public_id: (req, file) => {
+      const now = new Date();
+      const dateTime = now.toISOString().replace(/:/g, '-').replace(/\..+/, '');
+      
+      let restaurantName = 'restaurant';
+      if (req.user && req.user.restaurant && req.user.restaurant.name) {
+        restaurantName = req.user.restaurant.name
+          .toLowerCase()
+          .replace(/\s+/g, '-')
+          .replace(/[^a-z0-9-]/g, '');
+      }
+      
+      return `photo-${restaurantName}-${dateTime}-${Math.random().toString(36).substring(7)}`;
+    },
+    transformation: [
+      { width: 1200, height: 800, crop: 'limit', quality: 'auto' }
+    ]
+  }
+});
 
+const restaurantPhotosUpload = multer({
+  storage: restaurantPhotosStorage,
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit for photos
+  },
+  fileFilter: function (req, file, cb) {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed!'), false);
+    }
+  }
+});
 const menuItemUpload = multer({
   storage: menuItemStorage,
   limits: {
@@ -249,6 +290,323 @@ app.get('/api/sse-debug', (req, res) => {
   res.json(debugInfo);
 });
 
+// ============================================================================
+// RESTAURANT PHOTOS ENDPOINTS
+// ============================================================================
+
+// Upload multiple restaurant photos (protected)
+app.post('/api/restaurants/:id/photos', auth, restaurantPhotosUpload.array('photos', 10), async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    const descriptions = req.body.descriptions || [];
+    
+    console.log(`📸 Uploading photos for restaurant: ${restaurantId}`);
+    console.log(`📁 Files received: ${req.files?.length || 0}`);
+    
+    // Verify restaurant belongs to user
+    if (restaurantId !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ 
+        error: 'Access denied - you can only upload photos for your own restaurant' 
+      });
+    }
+
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    // Initialize photos array if it doesn't exist
+    if (!restaurant.photos) {
+      restaurant.photos = [];
+    }
+
+    // Add new photos
+    const newPhotos = [];
+    if (req.files && req.files.length > 0) {
+      req.files.forEach((file, index) => {
+        const photoData = {
+          url: file.path,
+          description: descriptions[index] || '',
+          order: restaurant.photos.length + index,
+          createdAt: new Date()
+        };
+        
+        newPhotos.push(photoData);
+        restaurant.photos.push(photoData);
+        
+        console.log(`✅ Photo uploaded to Cloudinary: ${file.path}`);
+      });
+    }
+
+    await restaurant.save();
+
+    console.log(`✅ Added ${newPhotos.length} photos to restaurant ${restaurant.name}`);
+    
+    res.status(201).json({
+      message: 'Restaurant photos uploaded successfully',
+      photos: newPhotos,
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name,
+        photos: restaurant.photos,
+        totalPhotos: restaurant.photos.length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to upload restaurant photos:', error);
+    res.status(500).json({ error: 'Failed to upload restaurant photos', details: error.message });
+  }
+});
+
+// Get restaurant photos (public)
+app.get('/api/restaurants/:id/photos', async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    
+    console.log(`📸 Getting photos for restaurant: ${restaurantId}`);
+    
+    const restaurant = await Restaurant.findById(restaurantId)
+      .select('name logo photos');
+    
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    // Ensure photos array exists
+    const photos = restaurant.photos || [];
+    
+    // Sort photos by order
+    const sortedPhotos = photos.sort((a, b) => a.order - b.order);
+
+    console.log(`✅ Found ${sortedPhotos.length} photos for restaurant ${restaurant.name}`);
+    
+    res.json({
+      message: 'Restaurant photos retrieved successfully',
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name,
+        logo: restaurant.logo
+      },
+      photos: sortedPhotos,
+      total: sortedPhotos.length
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurant photos:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant photos', details: error.message });
+  }
+});
+
+// Update photo description or order (protected)
+app.put('/api/restaurants/:id/photos/:photoIndex', auth, async (req, res) => {
+  try {
+    const { id: restaurantId, photoIndex } = req.params;
+    const { description, order } = req.body;
+    
+    console.log(`📸 Updating photo ${photoIndex} for restaurant: ${restaurantId}`);
+    
+    // Verify restaurant belongs to user
+    if (restaurantId !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ 
+        error: 'Access denied - you can only update photos for your own restaurant' 
+      });
+    }
+
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    // Ensure photos array exists
+    if (!restaurant.photos || !Array.isArray(restaurant.photos)) {
+      restaurant.photos = [];
+    }
+
+    const index = parseInt(photoIndex);
+    if (isNaN(index) || index < 0 || index >= restaurant.photos.length) {
+      return res.status(404).json({ error: 'Photo not found' });
+    }
+
+    // Update photo data
+    if (description !== undefined) {
+      restaurant.photos[index].description = description;
+    }
+    
+    if (order !== undefined && !isNaN(order)) {
+      restaurant.photos[index].order = parseInt(order);
+    }
+    
+    restaurant.photos[index].updatedAt = new Date();
+
+    // Sort photos by order
+    restaurant.photos.sort((a, b) => a.order - b.order);
+    
+    await restaurant.save();
+
+    console.log(`✅ Updated photo ${index} for restaurant ${restaurant.name}`);
+    
+    res.json({
+      message: 'Photo updated successfully',
+      photo: restaurant.photos.find(p => p._id === restaurant.photos[index]._id),
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name,
+        totalPhotos: restaurant.photos.length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to update photo:', error);
+    res.status(500).json({ error: 'Failed to update photo', details: error.message });
+  }
+});
+
+// Delete restaurant photo (protected)
+app.delete('/api/restaurants/:id/photos/:photoIndex', auth, async (req, res) => {
+  try {
+    const { id: restaurantId, photoIndex } = req.params;
+    
+    console.log(`🗑️ Deleting photo ${photoIndex} for restaurant: ${restaurantId}`);
+    
+    // Verify restaurant belongs to user
+    if (restaurantId !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ 
+        error: 'Access denied - you can only delete photos for your own restaurant' 
+      });
+    }
+
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    // Ensure photos array exists
+    if (!restaurant.photos || !Array.isArray(restaurant.photos)) {
+      restaurant.photos = [];
+      return res.json({
+        message: 'No photos to delete',
+        restaurant: {
+          id: restaurant._id,
+          name: restaurant.name,
+          totalPhotos: 0
+        }
+      });
+    }
+
+    const index = parseInt(photoIndex);
+    if (isNaN(index) || index < 0 || index >= restaurant.photos.length) {
+      return res.status(404).json({ error: 'Photo not found' });
+    }
+
+    const photoToDelete = restaurant.photos[index];
+    
+    // Delete from Cloudinary
+    if (photoToDelete.url && photoToDelete.url.includes('cloudinary.com')) {
+      await deleteCloudinaryImage(photoToDelete.url);
+      console.log(`🗑️ Deleted photo from Cloudinary: ${photoToDelete.url}`);
+    }
+
+    // Remove from array
+    restaurant.photos.splice(index, 1);
+    
+    // Update orders for remaining photos
+    restaurant.photos.forEach((photo, idx) => {
+      photo.order = idx;
+    });
+    
+    await restaurant.save();
+
+    console.log(`✅ Deleted photo ${index} from restaurant ${restaurant.name}`);
+    
+    res.json({
+      message: 'Photo deleted successfully',
+      deletedPhoto: photoToDelete,
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name,
+        photos: restaurant.photos,
+        totalPhotos: restaurant.photos.length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to delete photo:', error);
+    res.status(500).json({ error: 'Failed to delete photo', details: error.message });
+  }
+});
+
+// Reorder restaurant photos (protected)
+app.put('/api/restaurants/:id/photos/reorder', auth, async (req, res) => {
+  try {
+    const restaurantId = req.params.id;
+    const { photoOrder } = req.body; // Array of photo IDs in new order
+    
+    console.log(`🔄 Reordering photos for restaurant: ${restaurantId}`);
+    
+    // Verify restaurant belongs to user
+    if (restaurantId !== req.user.restaurant._id.toString()) {
+      return res.status(403).json({ 
+        error: 'Access denied - you can only reorder photos for your own restaurant' 
+      });
+    }
+
+    const restaurant = await Restaurant.findById(restaurantId);
+    if (!restaurant) {
+      return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    // Ensure photos array exists
+    if (!restaurant.photos || !Array.isArray(restaurant.photos)) {
+      restaurant.photos = [];
+    }
+
+    if (!Array.isArray(photoOrder)) {
+      return res.status(400).json({ error: 'photoOrder must be an array of photo IDs' });
+    }
+
+    // Create a map for quick lookup
+    const photoMap = new Map();
+    restaurant.photos.forEach(photo => {
+      photoMap.set(photo._id.toString(), photo);
+    });
+
+    // Reorder photos based on provided order
+    const reorderedPhotos = [];
+    photoOrder.forEach((photoId, index) => {
+      const photo = photoMap.get(photoId);
+      if (photo) {
+        photo.order = index;
+        reorderedPhotos.push(photo);
+      }
+    });
+
+    // Add any photos not in the order array (shouldn't happen, but just in case)
+    restaurant.photos.forEach(photo => {
+      if (!photoOrder.includes(photo._id.toString())) {
+        photo.order = reorderedPhotos.length;
+        reorderedPhotos.push(photo);
+      }
+    });
+
+    // Sort by order to ensure consistency
+    reorderedPhotos.sort((a, b) => a.order - b.order);
+    
+    restaurant.photos = reorderedPhotos;
+    await restaurant.save();
+
+    console.log(`✅ Reordered ${reorderedPhotos.length} photos for restaurant ${restaurant.name}`);
+    
+    res.json({
+      message: 'Photos reordered successfully',
+      photos: restaurant.photos,
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name,
+        totalPhotos: restaurant.photos.length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to reorder photos:', error);
+    res.status(500).json({ error: 'Failed to reorder photos', details: error.message });
+  }
+});
 // Test SSE notification endpoint
 app.post('/api/test-sse/:restaurantId', async (req, res) => {
   try {
@@ -327,13 +685,18 @@ app.get('/api/test-db', async (req, res) => {
 // RESTAURANT SETTINGS ENDPOINTS
 // ============================================================================
 
-// Get current restaurant (protected)
+// In the GET /api/restaurants/current endpoint (around line 140)
 app.get('/api/restaurants/current', auth, async (req, res) => {
   try {
     const restaurant = await Restaurant.findById(req.user.restaurant._id);
     
     if (!restaurant) {
       return res.status(404).json({ error: 'Restaurant not found' });
+    }
+
+    // Ensure photos array exists
+    if (!restaurant.photos) {
+      restaurant.photos = [];
     }
 
     res.json({
@@ -4092,7 +4455,9 @@ app.get('/api/public/restaurants/:id', async (req, res) => {
   try {
     console.log('🚀 GET /api/public/restaurants/' + req.params.id);
     
-    let restaurant = await Restaurant.findById(req.params.id);
+    let restaurant = await Restaurant.findById(req.params.id)
+      .select('-userRatings -__v'); // Exclude userRatings for public endpoint
+    
     if (!restaurant) {
       return res.status(404).json({ error: 'Restaurant not found' });
     }
@@ -4100,21 +4465,18 @@ app.get('/api/public/restaurants/:id', async (req, res) => {
     // Convert to plain object
     let restaurantData = restaurant.toObject ? restaurant.toObject() : restaurant;
     
-    // Ensure rating exists in the response
+    // Ensure photos array exists
+    if (!restaurantData.photos) {
+      restaurantData.photos = [];
+    }
+    
+    // Ensure rating exists
     if (!restaurantData.rating) {
-      console.log('⚠️ RATING MISSING - Adding default rating structure');
       restaurantData.rating = {
         average: 0,
         count: 0,
         distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
       };
-      
-      // Also update the database
-      console.log('💾 Updating database with rating field...');
-      await Restaurant.findByIdAndUpdate(req.params.id, {
-        $set: { rating: restaurantData.rating }
-      });
-      console.log('✅ Database updated');
     }
 
     res.json({ 
@@ -4263,6 +4625,12 @@ app.get('/api', (req, res) => {
     { method: 'GET', path: '/api/db-info', description: 'Get database information' },
     { method: 'GET', path: '/api/sse-debug', description: 'Get SSE connection status' },
     
+    // Add to the routes listing at the end of the file
+{ method: 'POST', path: '/api/restaurants/:id/photos', description: 'Upload restaurant photos (protected)' },
+{ method: 'GET', path: '/api/restaurants/:id/photos', description: 'Get restaurant photos (public)' },
+{ method: 'PUT', path: '/api/restaurants/:id/photos/:photoIndex', description: 'Update photo info (protected)' },
+{ method: 'DELETE', path: '/api/restaurants/:id/photos/:photoIndex', description: 'Delete restaurant photo (protected)' },
+{ method: 'PUT', path: '/api/restaurants/:id/photos/reorder', description: 'Reorder photos (protected)' },
     // Restaurant settings routes
     { method: 'GET', path: '/api/restaurants/current', description: 'Get current restaurant (protected)' },
     { method: 'PUT', path: '/api/restaurants/current', description: 'Update current restaurant (protected)' },

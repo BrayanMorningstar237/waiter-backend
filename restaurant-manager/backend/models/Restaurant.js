@@ -35,9 +35,31 @@ const restaurantSchema = new mongoose.Schema({
     type: String, // URL to logo image
     default: ''
   },
+  // ADD THIS SECTION FOR RESTAURANT PHOTOS
+  photos: [{
+    url: {
+      type: String,
+      required: true
+    },
+    description: {
+      type: String,
+      default: ''
+    },
+    order: {
+      type: Number,
+      default: 0
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   theme: {
     primaryColor: { type: String, default: '#3B82F6' },
-    secondaryColor: { type: String, default: '#1E40AF' }
+    secondaryColor: { type: String, default: '#1E40AF' },
+    backgroundColor: { type: String, default: '#FFFFFF' },
+    textColor: { type: String, default: '#1F2937' },
+    accentColor: { type: String, default: '#10B981' }
   },
   isActive: {
     type: Boolean,
