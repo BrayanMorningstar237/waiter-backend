@@ -1500,7 +1500,7 @@ app.get('/api/menu-items', auth, async (req, res) => {
   }
 });
 
-// Update menu item (protected)
+// Update menu item (protected) - FIXED VERSION
 app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
     const existingItem = await MenuItem.findById(req.params.id);
@@ -1514,28 +1514,82 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
 
     console.log('📦 Updating menu item:', req.params.id);
 
-    const updateData = {
-      ...req.body,
-      ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
-      price: req.body.price ? Number(req.body.price) : undefined,
-      preparationTime: req.body.preparationTime ? Number(req.body.preparationTime) : undefined,
-      spiceLevel: req.body.spiceLevel ? Number(req.body.spiceLevel) : undefined,
-      isVegetarian: req.body.isVegetarian ? req.body.isVegetarian === 'true' : undefined,
-      isVegan: req.body.isVegan ? req.body.isVegan === 'true' : undefined,
-      isGlutenFree: req.body.isGlutenFree ? req.body.isGlutenFree === 'true' : undefined,
-      isAvailable: req.body.isAvailable ? req.body.isAvailable === 'true' : undefined,
-      'nutrition.calories': req.body.calories ? Number(req.body.calories) : undefined,
-      'nutrition.protein': req.body.protein ? Number(req.body.protein) : undefined,
-      'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : undefined,
-      'nutrition.fat': req.body.fat ? Number(req.body.fat) : undefined,
-      'nutrition.fiber': req.body.fiber ? Number(req.body.fiber) : undefined,
-      'nutrition.sugar': req.body.sugar ? Number(req.body.sugar) : undefined,
-      'nutrition.sodium': req.body.sodium ? Number(req.body.sodium) : undefined,
-      'takeaway.isTakeawayAvailable': req.body.isTakeawayAvailable ? req.body.isTakeawayAvailable === 'true' : undefined,
-      'takeaway.takeawayPrice': req.body.takeawayPrice ? Number(req.body.takeawayPrice) : undefined,
-      'takeaway.packagingFee': req.body.packagingFee ? Number(req.body.packagingFee) : undefined
-    };
+    // Check if data is coming as JSON string in 'data' field
+    let updateData;
+    if (req.body.data) {
+      try {
+        updateData = JSON.parse(req.body.data);
+        console.log('📦 Parsed update data from "data" field:', updateData);
+      } catch (parseError) {
+        console.error('❌ Failed to parse JSON data:', parseError);
+        return res.status(400).json({ error: 'Invalid JSON data in "data" field' });
+      }
+    } else {
+      updateData = req.body;
+    }
 
+    // Process availableDays if present
+    if (updateData.availableDays) {
+      console.log('📅 Updating available days to:', updateData.availableDays);
+      updateData.availableDays = updateData.availableDays;
+    }
+
+    // Process ingredients
+    if (updateData.ingredients) {
+      if (typeof updateData.ingredients === 'string') {
+        updateData.ingredients = updateData.ingredients.split(',').map(ing => ing.trim()).filter(ing => ing);
+      }
+    }
+
+    // Process numeric fields
+    if (updateData.price) updateData.price = Number(updateData.price);
+    if (updateData.preparationTime) updateData.preparationTime = Number(updateData.preparationTime);
+    if (updateData.spiceLevel) updateData.spiceLevel = Number(updateData.spiceLevel);
+
+    // Process boolean fields
+    if (updateData.isVegetarian !== undefined) {
+      updateData.isVegetarian = updateData.isVegetarian === 'true' || updateData.isVegetarian === true;
+    }
+    if (updateData.isVegan !== undefined) {
+      updateData.isVegan = updateData.isVegan === 'true' || updateData.isVegan === true;
+    }
+    if (updateData.isGlutenFree !== undefined) {
+      updateData.isGlutenFree = updateData.isGlutenFree === 'true' || updateData.isGlutenFree === true;
+    }
+    if (updateData.isAvailable !== undefined) {
+      updateData.isAvailable = updateData.isAvailable === 'true' || updateData.isAvailable === true;
+    }
+
+    // Handle takeaway data
+    if (updateData.takeaway) {
+      updateData['takeaway.isTakeawayAvailable'] = updateData.takeaway.isTakeawayAvailable || false;
+      updateData['takeaway.takeawayPrice'] = updateData.takeaway.takeawayPrice || updateData.price;
+      updateData['takeaway.packagingFee'] = updateData.takeaway.packagingFee || 0;
+      
+      // Remove the nested object to avoid conflicts
+      delete updateData.takeaway;
+    } else if (updateData.isTakeawayAvailable !== undefined) {
+      updateData['takeaway.isTakeawayAvailable'] = updateData.isTakeawayAvailable === 'true' || updateData.isTakeawayAvailable === true;
+      updateData['takeaway.takeawayPrice'] = updateData.takeawayPrice || updateData.price;
+      updateData['takeaway.packagingFee'] = updateData.packagingFee || 0;
+    }
+
+    // Handle nutrition data
+    if (updateData.nutrition) {
+      const nutrition = updateData.nutrition;
+      if (nutrition.calories !== undefined) updateData['nutrition.calories'] = Number(nutrition.calories);
+      if (nutrition.protein !== undefined) updateData['nutrition.protein'] = Number(nutrition.protein);
+      if (nutrition.carbs !== undefined) updateData['nutrition.carbs'] = Number(nutrition.carbs);
+      if (nutrition.fat !== undefined) updateData['nutrition.fat'] = Number(nutrition.fat);
+      if (nutrition.fiber !== undefined) updateData['nutrition.fiber'] = Number(nutrition.fiber);
+      if (nutrition.sugar !== undefined) updateData['nutrition.sugar'] = Number(nutrition.sugar);
+      if (nutrition.sodium !== undefined) updateData['nutrition.sodium'] = Number(nutrition.sodium);
+      
+      // Remove the nested object
+      delete updateData.nutrition;
+    }
+
+    // Handle image
     if (req.file) {
       // Delete old image from Cloudinary if it exists
       if (existingItem.image && existingItem.image.includes('cloudinary.com')) {
@@ -1545,6 +1599,8 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
       updateData.image = req.file.path;
       console.log('📸 New image uploaded to Cloudinary:', req.file.path);
     }
+
+    console.log('✅ Final update data:', JSON.stringify(updateData, null, 2));
 
     const menuItem = await MenuItem.findByIdAndUpdate(
       req.params.id,
@@ -1569,49 +1625,131 @@ app.put('/api/menu-items/:id', auth, menuItemUpload.single('image'), async (req,
 });
 
 // Create menu item (protected)
+// Create menu item (protected) - FIXED VERSION
 app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, res) => {
   try {
     console.log('📦 Creating menu item with data:', req.body);
+    console.log('📁 Files:', req.file);
     console.log('🏪 Restaurant:', req.user.restaurant.name);
 
-    const menuItemData = {
-      ...req.body,
-      restaurant: req.user.restaurant._id,
-      ingredients: req.body.ingredients ? JSON.parse(req.body.ingredients) : [],
-      price: Number(req.body.price),
-      preparationTime: Number(req.body.preparationTime),
-      spiceLevel: Number(req.body.spiceLevel),
-      isVegetarian: req.body.isVegetarian === 'true',
-      isVegan: req.body.isVegan === 'true',
-      isGlutenFree: req.body.isGlutenFree === 'true',
-      isAvailable: req.body.isAvailable === 'true',
-      'nutrition.calories': req.body.calories ? Number(req.body.calories) : 0,
-      'nutrition.protein': req.body.protein ? Number(req.body.protein) : 0,
-      'nutrition.carbs': req.body.carbs ? Number(req.body.carbs) : 0,
-      'nutrition.fat': req.body.fat ? Number(req.body.fat) : 0,
-      'nutrition.fiber': req.body.fiber ? Number(req.body.fiber) : 0,
-      'nutrition.sugar': req.body.sugar ? Number(req.body.sugar) : 0,
-      'nutrition.sodium': req.body.sodium ? Number(req.body.sodium) : 0,
-      'takeaway.isTakeawayAvailable': req.body.isTakeawayAvailable === 'true',
-      'takeaway.takeawayPrice': req.body.takeawayPrice ? Number(req.body.takeawayPrice) : undefined,
-      'takeaway.packagingFee': req.body.packagingFee ? Number(req.body.packagingFee) : 0
-    };
-
-    if (req.file) {
-      menuItemData.image = req.file.path;
-      console.log('📸 Image uploaded to Cloudinary:', req.file.path);
+    // Check if data is coming as JSON string in 'data' field
+    let menuItemData;
+    if (req.body.data) {
+      // Parse JSON data from 'data' field
+      try {
+        menuItemData = JSON.parse(req.body.data);
+        console.log('📦 Parsed data from "data" field:', menuItemData);
+      } catch (parseError) {
+        console.error('❌ Failed to parse JSON data:', parseError);
+        return res.status(400).json({ error: 'Invalid JSON data in "data" field' });
+      }
     } else {
-      console.log('⚠️ No image file attached to request');
+      // Use regular form data
+      menuItemData = req.body;
     }
 
-    const menuItem = new MenuItem(menuItemData);
+    // Log the availableDays if present
+    if (menuItemData.availableDays) {
+      console.log('📅 Available days in request:', menuItemData.availableDays);
+    }
+
+    // Validate required fields
+    if (!menuItemData.name || !menuItemData.price || !menuItemData.category) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: name, price, and category are required' 
+      });
+    }
+
+    // Parse ingredients if it's a string
+    let ingredientsArray = [];
+    if (menuItemData.ingredients) {
+      if (typeof menuItemData.ingredients === 'string') {
+        ingredientsArray = menuItemData.ingredients.split(',').map(ing => ing.trim()).filter(ing => ing);
+      } else if (Array.isArray(menuItemData.ingredients)) {
+        ingredientsArray = menuItemData.ingredients;
+      }
+    }
+
+    // Parse takeaway data
+    let takeawayData = {};
+    if (menuItemData.takeaway) {
+      takeawayData = {
+        isTakeawayAvailable: menuItemData.takeaway.isTakeawayAvailable || false,
+        takeawayPrice: menuItemData.takeaway.takeawayPrice || Number(menuItemData.price),
+        packagingFee: menuItemData.takeaway.packagingFee || 0
+      };
+    } else {
+      // Backward compatibility
+      takeawayData = {
+        isTakeawayAvailable: menuItemData.isTakeawayAvailable || false,
+        takeawayPrice: menuItemData.takeawayPrice || Number(menuItemData.price),
+        packagingFee: menuItemData.packagingFee || 0
+      };
+    }
+
+    // Parse nutrition data
+    let nutritionData = {};
+    if (menuItemData.nutrition) {
+      nutritionData = {
+        calories: menuItemData.nutrition.calories || 0,
+        protein: menuItemData.nutrition.protein || 0,
+        carbs: menuItemData.nutrition.carbs || 0,
+        fat: menuItemData.nutrition.fat || 0,
+        fiber: menuItemData.nutrition.fiber || 0,
+        sugar: menuItemData.nutrition.sugar || 0,
+        sodium: menuItemData.nutrition.sodium || 0
+      };
+    } else {
+      // Backward compatibility
+      nutritionData = {
+        calories: menuItemData.calories || 0,
+        protein: menuItemData.protein || 0,
+        carbs: menuItemData.carbs || 0,
+        fat: menuItemData.fat || 0,
+        fiber: menuItemData.fiber || 0,
+        sugar: menuItemData.sugar || 0,
+        sodium: menuItemData.sodium || 0
+      };
+    }
+
+    // Build the menu item object
+    const finalMenuItemData = {
+      name: menuItemData.name.trim(),
+      description: menuItemData.description || '',
+      price: Number(menuItemData.price),
+      category: menuItemData.category,
+      restaurant: req.user.restaurant._id,
+      ingredients: ingredientsArray,
+      preparationTime: Number(menuItemData.preparationTime) || 15,
+      spiceLevel: Number(menuItemData.spiceLevel) || 0,
+      isVegetarian: Boolean(menuItemData.isVegetarian),
+      isVegan: Boolean(menuItemData.isVegan),
+      isGlutenFree: Boolean(menuItemData.isGlutenFree),
+      isAvailable: menuItemData.isAvailable !== undefined ? Boolean(menuItemData.isAvailable) : true,
+      availableDays: menuItemData.availableDays || ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+      nutrition: nutritionData,
+      takeaway: takeawayData
+    };
+
+    // Handle image
+    if (req.file) {
+      finalMenuItemData.image = req.file.path;
+      console.log('📸 Image uploaded to Cloudinary:', req.file.path);
+    }
+
+    console.log('✅ Processed menu item data:', JSON.stringify(finalMenuItemData, null, 2));
+
+    // Create and save menu item
+    const menuItem = new MenuItem(finalMenuItemData);
     const savedItem = await menuItem.save();
     
+    // Populate category and restaurant
     const populatedItem = await MenuItem.findById(savedItem._id)
       .populate('category', 'name')
       .populate('restaurant', 'name');
 
     console.log('✅ Menu item created successfully:', populatedItem.name);
+    console.log('📅 Available days saved:', populatedItem.availableDays);
     
     res.status(201).json({
       message: 'Menu item created successfully',
@@ -1619,7 +1757,169 @@ app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, re
     });
   } catch (error) {
     console.error('❌ Failed to create menu item:', error);
-    res.status(500).json({ error: 'Failed to create menu item', details: error.message });
+    
+    // More detailed error logging
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      console.error('📝 Validation errors:', errors);
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.join(', ') 
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Failed to create menu item', 
+      details: error.message 
+    });
+  }
+});// Create menu item (protected) - FIXED VERSION
+app.post('/api/menu-items', auth, menuItemUpload.single('image'), async (req, res) => {
+  try {
+    console.log('📦 Creating menu item with data:', req.body);
+    console.log('📁 Files:', req.file);
+    console.log('🏪 Restaurant:', req.user.restaurant.name);
+
+    // Check if data is coming as JSON string in 'data' field
+    let menuItemData;
+    if (req.body.data) {
+      // Parse JSON data from 'data' field
+      try {
+        menuItemData = JSON.parse(req.body.data);
+        console.log('📦 Parsed data from "data" field:', menuItemData);
+      } catch (parseError) {
+        console.error('❌ Failed to parse JSON data:', parseError);
+        return res.status(400).json({ error: 'Invalid JSON data in "data" field' });
+      }
+    } else {
+      // Use regular form data
+      menuItemData = req.body;
+    }
+
+    // Log the availableDays if present
+    if (menuItemData.availableDays) {
+      console.log('📅 Available days in request:', menuItemData.availableDays);
+    }
+
+    // Validate required fields
+    if (!menuItemData.name || !menuItemData.price || !menuItemData.category) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: name, price, and category are required' 
+      });
+    }
+
+    // Parse ingredients if it's a string
+    let ingredientsArray = [];
+    if (menuItemData.ingredients) {
+      if (typeof menuItemData.ingredients === 'string') {
+        ingredientsArray = menuItemData.ingredients.split(',').map(ing => ing.trim()).filter(ing => ing);
+      } else if (Array.isArray(menuItemData.ingredients)) {
+        ingredientsArray = menuItemData.ingredients;
+      }
+    }
+
+    // Parse takeaway data
+    let takeawayData = {};
+    if (menuItemData.takeaway) {
+      takeawayData = {
+        isTakeawayAvailable: menuItemData.takeaway.isTakeawayAvailable || false,
+        takeawayPrice: menuItemData.takeaway.takeawayPrice || Number(menuItemData.price),
+        packagingFee: menuItemData.takeaway.packagingFee || 0
+      };
+    } else {
+      // Backward compatibility
+      takeawayData = {
+        isTakeawayAvailable: menuItemData.isTakeawayAvailable || false,
+        takeawayPrice: menuItemData.takeawayPrice || Number(menuItemData.price),
+        packagingFee: menuItemData.packagingFee || 0
+      };
+    }
+
+    // Parse nutrition data
+    let nutritionData = {};
+    if (menuItemData.nutrition) {
+      nutritionData = {
+        calories: menuItemData.nutrition.calories || 0,
+        protein: menuItemData.nutrition.protein || 0,
+        carbs: menuItemData.nutrition.carbs || 0,
+        fat: menuItemData.nutrition.fat || 0,
+        fiber: menuItemData.nutrition.fiber || 0,
+        sugar: menuItemData.nutrition.sugar || 0,
+        sodium: menuItemData.nutrition.sodium || 0
+      };
+    } else {
+      // Backward compatibility
+      nutritionData = {
+        calories: menuItemData.calories || 0,
+        protein: menuItemData.protein || 0,
+        carbs: menuItemData.carbs || 0,
+        fat: menuItemData.fat || 0,
+        fiber: menuItemData.fiber || 0,
+        sugar: menuItemData.sugar || 0,
+        sodium: menuItemData.sodium || 0
+      };
+    }
+
+    // Build the menu item object
+    const finalMenuItemData = {
+      name: menuItemData.name.trim(),
+      description: menuItemData.description || '',
+      price: Number(menuItemData.price),
+      category: menuItemData.category,
+      restaurant: req.user.restaurant._id,
+      ingredients: ingredientsArray,
+      preparationTime: Number(menuItemData.preparationTime) || 15,
+      spiceLevel: Number(menuItemData.spiceLevel) || 0,
+      isVegetarian: Boolean(menuItemData.isVegetarian),
+      isVegan: Boolean(menuItemData.isVegan),
+      isGlutenFree: Boolean(menuItemData.isGlutenFree),
+      isAvailable: menuItemData.isAvailable !== undefined ? Boolean(menuItemData.isAvailable) : true,
+      availableDays: menuItemData.availableDays || ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'],
+      nutrition: nutritionData,
+      takeaway: takeawayData
+    };
+
+    // Handle image
+    if (req.file) {
+      finalMenuItemData.image = req.file.path;
+      console.log('📸 Image uploaded to Cloudinary:', req.file.path);
+    }
+
+    console.log('✅ Processed menu item data:', JSON.stringify(finalMenuItemData, null, 2));
+
+    // Create and save menu item
+    const menuItem = new MenuItem(finalMenuItemData);
+    const savedItem = await menuItem.save();
+    
+    // Populate category and restaurant
+    const populatedItem = await MenuItem.findById(savedItem._id)
+      .populate('category', 'name')
+      .populate('restaurant', 'name');
+
+    console.log('✅ Menu item created successfully:', populatedItem.name);
+    console.log('📅 Available days saved:', populatedItem.availableDays);
+    
+    res.status(201).json({
+      message: 'Menu item created successfully',
+      menuItem: populatedItem
+    });
+  } catch (error) {
+    console.error('❌ Failed to create menu item:', error);
+    
+    // More detailed error logging
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      console.error('📝 Validation errors:', errors);
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.join(', ') 
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Failed to create menu item', 
+      details: error.message 
+    });
   }
 });
 
