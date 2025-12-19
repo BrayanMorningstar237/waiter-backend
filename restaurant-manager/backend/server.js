@@ -2313,7 +2313,7 @@ app.post('/api/orders', async (req, res) => {
       totalAmount, 
       orderType,
       paymentStatus,
-      paymentDetails // ✅ ADDED: Payment details from frontend
+      paymentDetails // ✅ Includes amountPaid with charges
     } = req.body;
 
     console.log('📦 Creating new order with data:', req.body);
@@ -2354,17 +2354,8 @@ app.post('/api/orders', async (req, res) => {
       }
     }
 
-    // Generate order number
-    const generateOrderNumber = () => {
-      const date = new Date();
-      const timestamp = date.getTime();
-      const random = Math.floor(Math.random() * 1000);
-      return `ORD-${timestamp}-${random}`;
-    };
-
-    const orderNumber = generateOrderNumber();
-    console.log('🔢 Generated order number:', orderNumber);
-
+    // Generate order number (will be done by pre-save middleware)
+    
     // ✅ Build payment details object if provided
     let paymentDetailsObj = null;
     if (paymentDetails && paymentDetails.method) {
@@ -2373,19 +2364,25 @@ app.post('/api/orders', async (req, res) => {
         phoneNumber: paymentDetails.phoneNumber || '',
         transactionId: paymentDetails.transactionId || '',
         status: paymentDetails.status || 'completed',
-        amountPaid: totalAmount,
+        amountPaid: paymentDetails.amountPaid || totalAmount, // ✅ Contains amount with charges
         currency: 'CFA',
-        paymentProvider: paymentDetails.method.includes('MoMo') ? 'MTN' : 
+        paymentProvider: paymentDetails.method.includes('MTN') ? 'MTN' : 
                         paymentDetails.method.includes('Orange') ? 'Orange' : 
                         paymentDetails.method,
         customerEmail: customerEmail || '',
         notes: paymentDetails.notes || ''
       };
+      
+      console.log('💰 Payment details with amountPaid:', {
+        cartTotal: totalAmount,
+        amountPaid: paymentDetailsObj.amountPaid,
+        serviceCharge: paymentDetailsObj.amountPaid - totalAmount,
+        paymentMethod: paymentDetailsObj.method
+      });
     }
 
-    // Create order
+    // Create order - amountPaidWithCharges will be set by pre-save middleware
     const order = new Order({
-      orderNumber: orderNumber,
       restaurant,
       customerName: customerName.trim(),
       customerPhone: customerPhone || '',
@@ -2401,8 +2398,8 @@ app.post('/api/orders', async (req, res) => {
       orderType: orderType || 'dine-in',
       status: 'pending',
       paymentStatus: paymentStatus || (paymentDetails ? 'paid' : 'pending'),
-      paymentDetails: paymentDetailsObj, // ✅ ADDED
-      paidAt: paymentStatus === 'paid' || paymentDetails ? new Date() : null // ✅ ADDED
+      paymentDetails: paymentDetailsObj,
+      paidAt: paymentStatus === 'paid' || paymentDetails ? new Date() : null
     });
 
     // Save the order
@@ -2418,35 +2415,26 @@ app.post('/api/orders', async (req, res) => {
       }
     }
     
-    console.log('✅ Order saved successfully with ID:', savedOrder._id);
-    
-    // Log payment details if present
-    if (paymentDetailsObj) {
-      console.log('💰 Payment details saved:', {
-        method: paymentDetailsObj.method,
-        transactionId: paymentDetailsObj.transactionId,
-        amount: paymentDetailsObj.amountPaid
-      });
-    }
+    console.log('✅ Order saved successfully with amounts:', {
+      orderId: savedOrder._id,
+      orderNumber: savedOrder.orderNumber,
+      totalAmount: savedOrder.totalAmount,
+      amountPaidWithCharges: savedOrder.amountPaidWithCharges,
+      serviceCharge: savedOrder.amountPaidWithCharges - savedOrder.totalAmount,
+      paymentStatus: savedOrder.paymentStatus
+    });
 
-    // Populate the order with all details including table
+    // Populate the order with all details
     const populatedOrder = await Order.findById(savedOrder._id)
       .populate('items.menuItem', 'name description image price category ingredients rating likes nutrition')
       .populate('restaurant', 'name contact address')
       .populate('table', 'tableNumber capacity status');
 
-    console.log(`✅ New order created: ${populatedOrder.orderNumber} for ${customerName}`);
-    console.log(`💰 Payment Status: ${populatedOrder.paymentStatus}`);
+    console.log(`✅ New order created: ${populatedOrder.orderNumber}`);
+    console.log(`💰 Amounts - Cart: ${populatedOrder.totalAmount} CFA | Paid: ${populatedOrder.amountPaidWithCharges} CFA`);
     if (populatedOrder.paymentDetails) {
-      console.log(`📱 Payment Method: ${populatedOrder.paymentDetails.method}`);
-      if (populatedOrder.paymentDetails.transactionId) {
-        console.log(`🔢 Transaction ID: ${populatedOrder.paymentDetails.transactionId}`);
-      }
+      console.log(`📱 Payment: ${populatedOrder.paymentDetails.method}`);
     }
-    if (table) {
-      console.log(`🪑 Table: ${populatedOrder.table?.tableNumber}`);
-    }
-    console.log(`📊 Order details: ${populatedOrder.items.length} items, Total: ${totalAmount} CFA`);
     
     // 🔌 NOTIFY VIA SSE
     try {
