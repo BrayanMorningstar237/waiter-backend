@@ -230,8 +230,176 @@ const { auth } = require('./middleware/auth');
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 
+// In server.js, find this line (around line 110):
 const paymentRoutes = require('./payment'); // relative path to payment.js
 app.use('/api', paymentRoutes);
+
+// Add the Nkwa Pay configuration and endpoints below it:
+// ============================================================================
+// NKWA PAY INTEGRATION ENDPOINTS
+// ============================================================================
+
+// Mobile Money payment collection endpoint
+app.post('/api/payments/mobile-money/collect', async (req, res) => {
+  try {
+    const { amount, phoneNumber, provider = 'mtn', customerEmail = '', notes = '' } = req.body;
+
+    console.log('💰 Mobile money payment request:', {
+      amount,
+      phoneNumber,
+      provider,
+      customerEmail
+    });
+
+    // Validate required fields
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Valid amount is required' 
+      });
+    }
+
+    if (!phoneNumber || phoneNumber.trim() === '') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Phone number is required' 
+      });
+    }
+
+    // Format phone number for Cameroon
+    let formattedPhoneNumber = phoneNumber.trim();
+    
+    // Remove any non-digit characters
+    formattedPhoneNumber = formattedPhoneNumber.replace(/\D/g, '');
+    
+    // If starts with 237, keep it
+    // If starts with 6, prepend 237
+    // If starts with 00237, remove 00
+    if (formattedPhoneNumber.startsWith('237') && formattedPhoneNumber.length === 12) {
+      // Already in correct format: 2376XXXXXXXX
+    } else if (formattedPhoneNumber.startsWith('6') && formattedPhoneNumber.length === 9) {
+      formattedPhoneNumber = '237' + formattedPhoneNumber;
+    } else if (formattedPhoneNumber.startsWith('00237') && formattedPhoneNumber.length === 14) {
+      formattedPhoneNumber = formattedPhoneNumber.substring(2);
+    } else {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid phone number format. Please use format: 6XXXXXXXX or 2376XXXXXXXX' 
+      });
+    }
+
+    // Convert amount to integer (Nkwa Pay expects integer in smallest currency unit)
+    const amountInCents = Math.round(amount * 100); // Assuming 1 CFA = 100 units
+
+    // Call Nkwa Pay API
+    const response = await pay.payments.collect({ 
+      amount: amountInCents, 
+      phoneNumber: formattedPhoneNumber 
+    });
+
+    console.log('✅ Payment initiated:', response.payment);
+
+    res.json({
+      success: true,
+      message: 'Payment request sent to phone',
+      payment: {
+        id: response.payment.id,
+        reference: response.payment.reference,
+        status: response.payment.status,
+        amount: amount,
+        phoneNumber: formattedPhoneNumber,
+        provider: provider,
+        customerEmail: customerEmail,
+        notes: notes
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Mobile money payment error:', error);
+    
+    // Handle specific Nkwa Pay errors
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ 
+        success: false, 
+        error: error.message || 'Payment processing failed' 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to process mobile money payment' 
+    });
+  }
+});
+
+// Check payment status endpoint
+app.get('/api/payments/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const response = await pay.payments.get(id);
+    
+    res.json({
+      success: true,
+      payment: response.payment
+    });
+
+  } catch (error) {
+    console.error('❌ Payment status check error:', error);
+    
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ 
+        success: false, 
+        error: error.message || 'Failed to check payment status' 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to check payment status' 
+    });
+  }
+});
+
+// Mock payment endpoint for testing (when Nkwa Pay is not configured)
+app.post('/api/payments/mobile-money/collect-mock', async (req, res) => {
+  try {
+    const { amount, phoneNumber, provider = 'mtn' } = req.body;
+
+    console.log('💰 Mock mobile money payment request:', {
+      amount,
+      phoneNumber,
+      provider
+    });
+
+    // Simulate processing delay
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Generate mock transaction ID
+    const transactionId = `MOCK-${Date.now()}-${Math.random().toString(36).substr(2, 8).toUpperCase()}`;
+    
+    // Simulate successful payment
+    res.json({
+      success: true,
+      message: 'Mock payment successful',
+      payment: {
+        id: transactionId,
+        reference: transactionId,
+        status: 'completed',
+        amount: amount,
+        phoneNumber: phoneNumber,
+        provider: provider
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Mock payment error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Mock payment failed' 
+    });
+  }
+});
 // ============================================================================
 // SSE ENDPOINTS
 // ============================================================================
@@ -2381,26 +2549,35 @@ app.post('/api/orders', async (req, res) => {
       });
     }
 
-    // Create order - amountPaidWithCharges will be set by pre-save middleware
-    const order = new Order({
-      restaurant,
-      customerName: customerName.trim(),
-      customerPhone: customerPhone || '',
-      customerEmail: customerEmail || '',
-      table: table || null,
-      items: items.map(item => ({
-        menuItem: item.menuItem,
-        quantity: item.quantity,
-        price: item.price,
-        specialInstructions: item.specialInstructions || ''
-      })),
-      totalAmount,
-      orderType: orderType || 'dine-in',
-      status: 'pending',
-      paymentStatus: paymentStatus || (paymentDetails ? 'paid' : 'pending'),
-      paymentDetails: paymentDetailsObj,
-      paidAt: paymentStatus === 'paid' || paymentDetails ? new Date() : null
-    });
+   
+// Create order - amountPaidWithCharges will be set by pre-save middleware
+// GENERATE ORDER NUMBER HERE
+const generateOrderNumber = () => {
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `ORD-${timestamp}-${random}`;
+};
+
+const order = new Order({
+  restaurant,
+  customerName: customerName.trim(),
+  customerPhone: customerPhone || '',
+  customerEmail: customerEmail || '',
+  table: table || null,
+  items: items.map(item => ({
+    menuItem: item.menuItem,
+    quantity: item.quantity,
+    price: item.price,
+    specialInstructions: item.specialInstructions || ''
+  })),
+  totalAmount,
+  orderType: orderType || 'dine-in',
+  status: 'pending',
+  paymentStatus: paymentStatus || (paymentDetails ? 'paid' : 'pending'),
+  paymentDetails: paymentDetailsObj,
+  paidAt: paymentStatus === 'paid' || paymentDetails ? new Date() : null,
+  orderNumber: generateOrderNumber() // ADD THIS LINE
+});
 
     // Save the order
     const savedOrder = await order.save();
