@@ -1222,6 +1222,52 @@ app.get('/api/public/menu-items/:id/engagement', async (req, res) => {
 // RESTAURANT RATING ENDPOINTS (PUBLIC)
 // ============================================================================
 
+// Get all restaurants with their ratings (public - for restaurant directory)
+app.get('/api/public/restaurants-with-ratings', async (req, res) => {
+  try {
+    console.log('🏪 Fetching all restaurants with ratings');
+    
+    // Get all active restaurants
+    const restaurants = await Restaurant.find({ isActive: true })
+      .select('name description logo contact address isActive rating')
+      .lean();
+    
+    // Process restaurants to ensure rating structure exists
+    const processedRestaurants = restaurants.map(restaurant => {
+      // Ensure rating object exists
+      if (!restaurant.rating) {
+        restaurant.rating = {
+          average: 0,
+          count: 0,
+          distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+        };
+      }
+      
+      // Ensure rating has average and count
+      if (!restaurant.rating.average) {
+        restaurant.rating.average = 0;
+      }
+      if (!restaurant.rating.count) {
+        restaurant.rating.count = 0;
+      }
+      
+      return restaurant;
+    });
+    
+    console.log(`✅ Found ${processedRestaurants.length} restaurants with ratings`);
+    
+    res.json({
+      message: 'Restaurants with ratings retrieved successfully',
+      restaurants: processedRestaurants
+    });
+  } catch (error) {
+    console.error('❌ Failed to fetch restaurants with ratings:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch restaurants with ratings', 
+      details: error.message 
+    });
+  }
+});
 // Rate/Update/Remove restaurant rating (public)
 app.post('/api/public/restaurants/:id/rate', async (req, res) => {
   try {
