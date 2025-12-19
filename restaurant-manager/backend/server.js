@@ -230,9 +230,13 @@ const { auth } = require('./middleware/auth');
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 
-// In server.js, find this line (around line 110):
-const paymentRoutes = require('./payment'); // relative path to payment.js
+const paymentRoutes = require('./payment');
+const pay = paymentRoutes.pay; // Get the pay instance from the module
+
 app.use('/api', paymentRoutes);
+
+// Now 'pay' is available for your endpoints
+console.log('🔧 Pay instance loaded:', pay ? 'Yes' : 'No');
 
 // Add the Nkwa Pay configuration and endpoints below it:
 // ============================================================================
