@@ -16,6 +16,7 @@
   "type": "commonjs",
   "dependencies": {
     "@nkwa-pay/sdk": "^0.2.2",
+    "axios": "^1.13.2",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^1.41.3",
     "cors": "^2.8.5",
