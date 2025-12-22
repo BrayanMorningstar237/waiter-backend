@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const router = express.Router();
 
 // Import Order model (adjust path based on your project structure)
-const Order = require('../models/Order'); // or './models/Order'
+const Order = require('./models/Order'); // or './models/Order'
 
 // ================================
 // HELPER FUNCTIONS
