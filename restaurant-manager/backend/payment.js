@@ -98,7 +98,7 @@ router.get('/payment-status/:id/stream', async (req, res) => {
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'Access-Control-Allow-Origin': '*',
-    'X-Accel-Buffering': 'no' // Disable nginx buffering
+    'X-Accel-Buffering': 'no'
   });
 
   // Send initial connection event
@@ -117,160 +117,183 @@ router.get('/payment-status/:id/stream', async (req, res) => {
 
   // Smart polling for payment status
   let pollingInterval;
+  let initialPollTimeout; // ⭐️ ADD THIS LINE
   let attemptCount = 0;
-  const maxAttempts = 60; // 5 minutes max (5 seconds * 60 attempts)
-  const baseInterval = 5000; // Start with 5 seconds
+  const maxAttempts = 60;
+  const baseInterval = 5000;
   
   const pollPaymentStatus = async () => {
-    try {
-      attemptCount++;
-      
-      console.log(`🔄 Polling payment status for ${transactionId}, attempt ${attemptCount}`);
-      
-      const options = {
-        method: 'GET',
-        headers: {
-          'X-API-Key': process.env.MYNKWA_API_KEY
-        }
-      };
+  try {
+    attemptCount++;
+    
+    console.log(`🔄 Polling payment status for ${transactionId}, attempt ${attemptCount}`);
+    
+    const options = {
+      method: 'GET',
+      headers: {
+        'X-API-Key': process.env.MYNKWA_API_KEY
+      }
+    };
 
-      const response = await axios.get(
-        `https://api.pay.mynkwa.com/payments/${transactionId}`,
-        options
-      );
+    const response = await axios.get(
+      `https://api.pay.mynkwa.com/payments/${transactionId}`,
+      options
+    );
 
-      const statusData = response.data;
-      console.log(`💰 Payment ${transactionId} status:`, statusData.status);
+    const statusData = response.data;
+    console.log(`💰 Payment ${transactionId} status:`, statusData.status);
+    
+    // Send status update via SSE
+    res.write(`data: ${JSON.stringify({
+      type: 'status_update',
+      transactionId: transactionId,
+      status: statusData.status,
+      data: statusData,
+      attempt: attemptCount,
+      timestamp: new Date().toISOString()
+    })}\n\n`);
+    
+    // ⭐️ CRITICAL FIX: Nkwa returns 'success' NOT 'successful'
+    if (statusData.status === 'success' || statusData.status === 'failed' || attemptCount >= maxAttempts) {
+      console.log(`🛑 FINAL STATUS DETECTED: ${statusData.status}. Stopping ALL polling...`);
       
-      // Send status update via SSE
-      res.write(`data: ${JSON.stringify({
-        type: 'status_update',
+      // ⭐️ CRITICAL: Clear ALL intervals and timeouts
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+        console.log(`✅ Cleared polling interval for ${transactionId}`);
+      }
+      
+      // Also clear the initial timeout
+      if (initialPollTimeout) {
+        clearTimeout(initialPollTimeout);
+        initialPollTimeout = null;
+      }
+      
+      // Create final event
+      const finalEvent = {
+        type: 'final_status',
         transactionId: transactionId,
         status: statusData.status,
         data: statusData,
-        attempt: attemptCount,
+        isFinal: true,
         timestamp: new Date().toISOString()
-      })}\n\n`);
+      };
       
-      // ⭐️ CRITICAL FIX: If payment is successful or failed, stop polling IMMEDIATELY
-      if (statusData.status === 'successful' || statusData.status === 'failed' || attemptCount >= maxAttempts) {
-        // Clear polling interval FIRST
-        if (pollingInterval) {
-          clearInterval(pollingInterval);
-          pollingInterval = null;
-        }
-        
-        // Create final event
-        const finalEvent = {
-          type: 'final_status',
-          transactionId: transactionId,
-          status: statusData.status,
-          data: statusData,
-          isFinal: true,
-          timestamp: new Date().toISOString()
-        };
-        
-        console.log(`✅ Stopped polling for ${transactionId}, final status: ${statusData.status}`);
-        
-        // Send final event
-        res.write(`data: ${JSON.stringify(finalEvent)}\n\n`);
-        
-        // Flush data to ensure it's sent
-        if (res.flush) {
-          res.flush();
-        }
-        
-        // Clean up connection immediately
-        if (paymentConnections.has(transactionId)) {
-          paymentConnections.get(transactionId).delete(res);
-          if (paymentConnections.get(transactionId).size === 0) {
-            paymentConnections.delete(transactionId);
-          }
-        }
-        
-        // End the response stream immediately
-        res.end();
-        
-        // Stop further execution
-        return;
+      console.log(`✅ Stopped polling for ${transactionId}, final status: ${statusData.status}`);
+      
+      // Send final event
+      res.write(`data: ${JSON.stringify(finalEvent)}\n\n`);
+      
+      // Flush data to ensure it's sent
+      if (res.flush) {
+        res.flush();
       }
       
-      // Adaptive polling - increase interval if still pending
-      if (statusData.status === 'pending' && attemptCount > 10) {
-        if (pollingInterval) {
-          clearInterval(pollingInterval);
+      // Clean up connection immediately
+      if (paymentConnections.has(transactionId)) {
+        paymentConnections.get(transactionId).delete(res);
+        if (paymentConnections.get(transactionId).size === 0) {
+          paymentConnections.delete(transactionId);
         }
-        pollingInterval = setInterval(pollPaymentStatus, 10000); // Switch to 10 seconds
-        console.log(`⏱️ Slowed polling to 10s for ${transactionId}`);
       }
       
-    } catch (error) {
-      console.error(`❌ Error polling payment ${transactionId}:`, error.message);
+      // End the response stream immediately
+      res.end();
       
-      // Send error via SSE
-      res.write(`data: ${JSON.stringify({
-        type: 'error',
-        transactionId: transactionId,
-        error: error.message,
-        attempt: attemptCount,
-        timestamp: new Date().toISOString()
-      })}\n\n`);
-      
-      // Stop polling on persistent errors
-      if (attemptCount >= 3 && error.response?.status === 404) {
-        if (pollingInterval) {
-          clearInterval(pollingInterval);
-          pollingInterval = null;
-        }
-        
-        res.write(`data: ${JSON.stringify({
-          type: 'not_found',
-          transactionId: transactionId,
-          error: 'Payment not found',
-          isFinal: true,
-          timestamp: new Date().toISOString()
-        })}\n\n`);
-        
-        // Clean up connection
-        if (paymentConnections.has(transactionId)) {
-          paymentConnections.get(transactionId).delete(res);
-          if (paymentConnections.get(transactionId).size === 0) {
-            paymentConnections.delete(transactionId);
-          }
-        }
-        
-        // End response
-        res.end();
-      }
+      // ⭐️ IMPORTANT: Return to stop ALL further execution
+      return;
     }
-  };
+    
+    // Adaptive polling - increase interval if still pending
+    if (statusData.status === 'pending' && attemptCount > 10) {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+      }
+      pollingInterval = setInterval(pollPaymentStatus, 10000); // Switch to 10 seconds
+      console.log(`⏱️ Slowed polling to 10s for ${transactionId}`);
+    }
+    
+  } catch (error) {
+    console.error(`❌ Error polling payment ${transactionId}:`, error.message);
+    
+    // Send error via SSE
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      transactionId: transactionId,
+      error: error.message,
+      attempt: attemptCount,
+      timestamp: new Date().toISOString()
+    })}\n\n`);
+    
+    // Stop polling on persistent errors
+    if (attemptCount >= 3 && error.response?.status === 404) {
+      if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+      }
+      
+      // Also clear initial timeout
+      if (initialPollTimeout) {
+        clearTimeout(initialPollTimeout);
+        initialPollTimeout = null;
+      }
+      
+      res.write(`data: ${JSON.stringify({
+        type: 'not_found',
+        transactionId: transactionId,
+        error: 'Payment not found',
+        isFinal: true,
+        timestamp: new Date().toISOString()
+      })}\n\n`);
+      
+      // Clean up connection
+      if (paymentConnections.has(transactionId)) {
+        paymentConnections.get(transactionId).delete(res);
+        if (paymentConnections.get(transactionId).size === 0) {
+          paymentConnections.delete(transactionId);
+        }
+      }
+      
+      // End response
+      res.end();
+    }
+  }
+};
 
   // Start polling with exponential backoff
-  const startPolling = () => {
-    // Initial immediate check
-    setTimeout(pollPaymentStatus, 1000);
-    
-    // Then regular polling
-    pollingInterval = setInterval(pollPaymentStatus, baseInterval);
-  };
+  
+const startPolling = () => {
+  // Store the initial timeout so we can clear it later
+  initialPollTimeout = setTimeout(pollPaymentStatus, 1000);
+  
+  // Then regular polling
+  pollingInterval = setInterval(pollPaymentStatus, baseInterval);
+};
 
   startPolling();
 
   // Remove connection when client closes
-  req.on('close', () => {
-    console.log(`💰 SSE connection closed for payment: ${transactionId}`);
-    if (pollingInterval) {
-      clearInterval(pollingInterval);
-      pollingInterval = null;
+req.on('close', () => {
+  console.log(`💰 SSE connection closed for payment: ${transactionId}`);
+  
+  // Clear ALL intervals and timeouts
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
+  }
+  if (initialPollTimeout) {
+    clearTimeout(initialPollTimeout);
+    initialPollTimeout = null;
+  }
+  
+  if (paymentConnections.has(transactionId)) {
+    paymentConnections.get(transactionId).delete(res);
+    if (paymentConnections.get(transactionId).size === 0) {
+      paymentConnections.delete(transactionId);
     }
-    
-    if (paymentConnections.has(transactionId)) {
-      paymentConnections.get(transactionId).delete(res);
-      if (paymentConnections.get(transactionId).size === 0) {
-        paymentConnections.delete(transactionId);
-      }
-    }
-  });
+  }
+});
 
   // Handle client disconnect
   res.on('close', () => {
