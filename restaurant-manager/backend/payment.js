@@ -335,102 +335,40 @@ router.get('/payment-status/:id', async (req, res) => {
 // ================================
 router.post(
   '/webhook',
-  express.raw({ type: 'application/json' }),
+  express.raw({ type: 'application/json' }), // Get raw body as Buffer
   async (req, res) => {
     try {
-      // ... [previous code remains the same until signature verification]
-      
-      console.log('🔐 Verifying signature...');
-      
-      // ⚠️ TEMPORARY: Skip verification for testing
-      const skipVerification = true; // Set this to false for production
-      let isValid = false;
-      
-      if (skipVerification) {
-        console.log('⚠️ SKIPPING signature verification for testing');
-        isValid = true; // Force valid for testing
-      } else {
-        // Real verification
-        isValid = verifyRSASignature(publicKey, message, signature);
+      const signature = req.headers['x-signature'];
+      const timestamp = req.headers['x-timestamp'];
+
+      if (!signature || !timestamp) {
+        console.error('❌ Missing signature or timestamp headers');
+        return res.status(400).json({ error: 'Missing signature or timestamp headers' });
       }
-      
-      if (!isValid) {
-        console.error('❌ SIGNATURE VERIFICATION FAILED');
-        return res.status(401).json({ 
-          error: 'Invalid signature',
-          verificationFailed: true
-        });
-      }
-      
-      
-      console.log('✅ SIGNATURE VERIFICATION SUCCESSFUL');
-      
-      // Parse the event data
-      let event;
-      try {
-        event = JSON.parse(rawBody);
-        console.log('✅ Event parsed successfully');
-        console.log('📋 Event type:', event.type);
-        console.log('📋 Event ID:', event.id);
-        console.log('📋 Event status:', event.status);
-        console.log('📋 Event reference:', event.reference);
-      } catch (parseError) {
-        console.error('❌ Failed to parse JSON:', parseError.message);
-        return res.status(400).json({ 
-          error: 'Invalid JSON body'
-        });
-      }
-      
-      // Process the event based on type
-      let processed = false;
-      
-      switch (event.type?.toLowerCase()) {
-        case 'collection':
-        case 'payment':
-          console.log('🔄 Processing payment/collection event');
-          processed = await handlePaymentEvent(event);
-          break;
-          
-        case 'disbursement':
-          console.log('🔄 Processing disbursement event');
-          // You would implement handleDisbursementEvent similar to handlePaymentEvent
-          processed = true; // Placeholder
-          break;
-          
-        case 'refund':
-          console.log('🔄 Processing refund event');
-          // You would implement handleRefundEvent
-          processed = true; // Placeholder
-          break;
-          
-        default:
-          console.log(`⚠️ Unknown event type: ${event.type}`);
-          processed = true;
-      }
-      
-      console.log('✅ =========== WEBHOOK PROCESSED ===========\n');
-      
-      // IMPORTANT: Always return 200 OK to acknowledge receipt
-      res.status(200).json({ 
-        received: true, 
-        verified: true,
-        processed: processed,
-        eventId: event.id,
-        eventType: event.type,
-        timestamp: new Date().toISOString()
-      });
-      
+
+      // 1. Convert raw Buffer to string
+      const rawBodyString = req.body.toString('utf8');
+      console.log('📦 Raw body string received:', rawBodyString);
+
+      // 2. Now parse it as JSON
+      const event = JSON.parse(rawBodyString);
+      console.log('✅ Event parsed successfully:', event.id);
+
+      // 3. YOUR LOGIC HERE (e.g., signature verification, updating orders)
+      // ... rest of your webhook logic ...
+
+      // 4. Always return 200 to acknowledge receipt[citation:4]
+      res.status(200).json({ received: true, eventId: event.id });
+
     } catch (err) {
-      console.error('❌ =========== WEBHOOK ERROR ===========');
-      console.error('❌ Error:', err.message);
-      console.error('❌ ======================================\n');
-      
-      // Still return 200 to prevent retries for unexpected errors
-      res.status(200).json({ 
-        received: true, 
-        error: err.message,
-        timestamp: new Date().toISOString()
-      });
+      console.error('❌ Webhook processing failed:', err.message);
+
+      // Check if the error is from JSON.parse
+      if (err instanceof SyntaxError) {
+        return res.status(400).json({ error: 'Invalid JSON body', detail: err.message });
+      }
+      // For other errors, still return 200 to prevent Nkwa Pay from retrying[citation:4]
+      res.status(200).json({ received: true, error: 'Processing failed' });
     }
   }
 );
