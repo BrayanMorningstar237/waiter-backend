@@ -59,15 +59,19 @@ router.post('/payments/collect', async (req, res) => {
       }
     );
 
+    // FIX: The Mynkwa API returns { data: {...}, reference: "...", message: "..." }
+    // So response.data contains the whole response, and response.data.data doesn't exist
+    console.log('🔍 Mynkwa API full response:', JSON.stringify(response.data, null, 2));
+    
     console.log('✅ Payment collection initiated:', {
-      transactionId: response.data.data.id,
-      status: response.data.data.status,
-      amount: response.data.data.amount
+      transactionId: response.data.id,  // CHANGED: response.data.id
+      status: response.data.status,
+      amount: response.data.amount
     });
 
     res.json({
       success: true,
-      data: response.data.data,
+      data: response.data,  // CHANGED: Just response.data (not response.data.data)
       reference: response.data.reference,
       message: `Payment collection initiated via ${provider.toUpperCase()}`
     });
