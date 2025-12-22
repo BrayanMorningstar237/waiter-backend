@@ -59,19 +59,17 @@ router.post('/payments/collect', async (req, res) => {
       }
     );
 
-    // FIX: The Mynkwa API returns { data: {...}, reference: "...", message: "..." }
-    // So response.data contains the whole response, and response.data.data doesn't exist
     console.log('🔍 Mynkwa API full response:', JSON.stringify(response.data, null, 2));
     
     console.log('✅ Payment collection initiated:', {
-      transactionId: response.data.id,  // CHANGED: response.data.id
+      transactionId: response.data.id,
       status: response.data.status,
       amount: response.data.amount
     });
 
     res.json({
       success: true,
-      data: response.data,  // CHANGED: Just response.data (not response.data.data)
+      data: response.data,
       reference: response.data.reference,
       message: `Payment collection initiated via ${provider.toUpperCase()}`
     });
@@ -154,37 +152,54 @@ router.get('/payment-status/:id/stream', async (req, res) => {
         timestamp: new Date().toISOString()
       })}\n\n`);
       
-      // If payment is successful or failed, stop polling
+      // ⭐️ CRITICAL FIX: If payment is successful or failed, stop polling IMMEDIATELY
       if (statusData.status === 'successful' || statusData.status === 'failed' || attemptCount >= maxAttempts) {
-        clearInterval(pollingInterval);
+        // Clear polling interval FIRST
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          pollingInterval = null;
+        }
         
-        // Send final event
-        res.write(`data: ${JSON.stringify({
+        // Create final event
+        const finalEvent = {
           type: 'final_status',
           transactionId: transactionId,
           status: statusData.status,
           data: statusData,
           isFinal: true,
           timestamp: new Date().toISOString()
-        })}\n\n`);
+        };
         
         console.log(`✅ Stopped polling for ${transactionId}, final status: ${statusData.status}`);
         
-        // Clean up after delay
-        setTimeout(() => {
-          if (paymentConnections.has(transactionId)) {
-            paymentConnections.get(transactionId).delete(res);
-            if (paymentConnections.get(transactionId).size === 0) {
-              paymentConnections.delete(transactionId);
-            }
+        // Send final event
+        res.write(`data: ${JSON.stringify(finalEvent)}\n\n`);
+        
+        // Flush data to ensure it's sent
+        if (res.flush) {
+          res.flush();
+        }
+        
+        // Clean up connection immediately
+        if (paymentConnections.has(transactionId)) {
+          paymentConnections.get(transactionId).delete(res);
+          if (paymentConnections.get(transactionId).size === 0) {
+            paymentConnections.delete(transactionId);
           }
-          res.end();
-        }, 2000);
+        }
+        
+        // End the response stream immediately
+        res.end();
+        
+        // Stop further execution
+        return;
       }
       
       // Adaptive polling - increase interval if still pending
       if (statusData.status === 'pending' && attemptCount > 10) {
-        clearInterval(pollingInterval);
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+        }
         pollingInterval = setInterval(pollPaymentStatus, 10000); // Switch to 10 seconds
         console.log(`⏱️ Slowed polling to 10s for ${transactionId}`);
       }
@@ -203,7 +218,11 @@ router.get('/payment-status/:id/stream', async (req, res) => {
       
       // Stop polling on persistent errors
       if (attemptCount >= 3 && error.response?.status === 404) {
-        clearInterval(pollingInterval);
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          pollingInterval = null;
+        }
+        
         res.write(`data: ${JSON.stringify({
           type: 'not_found',
           transactionId: transactionId,
@@ -212,15 +231,16 @@ router.get('/payment-status/:id/stream', async (req, res) => {
           timestamp: new Date().toISOString()
         })}\n\n`);
         
-        setTimeout(() => {
-          if (paymentConnections.has(transactionId)) {
-            paymentConnections.get(transactionId).delete(res);
-            if (paymentConnections.get(transactionId).size === 0) {
-              paymentConnections.delete(transactionId);
-            }
+        // Clean up connection
+        if (paymentConnections.has(transactionId)) {
+          paymentConnections.get(transactionId).delete(res);
+          if (paymentConnections.get(transactionId).size === 0) {
+            paymentConnections.delete(transactionId);
           }
-          res.end();
-        }, 2000);
+        }
+        
+        // End response
+        res.end();
       }
     }
   };
@@ -239,7 +259,10 @@ router.get('/payment-status/:id/stream', async (req, res) => {
   // Remove connection when client closes
   req.on('close', () => {
     console.log(`💰 SSE connection closed for payment: ${transactionId}`);
-    clearInterval(pollingInterval);
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+    }
     
     if (paymentConnections.has(transactionId)) {
       paymentConnections.get(transactionId).delete(res);
@@ -252,7 +275,10 @@ router.get('/payment-status/:id/stream', async (req, res) => {
   // Handle client disconnect
   res.on('close', () => {
     console.log(`💰 Client disconnected from SSE for payment: ${transactionId}`);
-    clearInterval(pollingInterval);
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+    }
   });
 });
 
