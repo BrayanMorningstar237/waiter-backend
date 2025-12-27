@@ -1025,94 +1025,216 @@ app.get('/api/withdrawals/available-orders', auth, async (req, res) => {
 
 
 // ============================================================================
-// WITHDRAWAL HISTORY ENDPOINT
+// GET ALL ORDERS FOR DAY (No filters, just list everything)
 // ============================================================================
 
-app.get('/api/withdrawals/history', auth, async (req, res) => {
+app.get('/api/orders/daily-summary', auth, async (req, res) => {
   try {
+    const { date, paymentMethod } = req.query;
+    
+    if (!date) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Date is required' 
+      });
+    }
+
     const restaurantId = req.user.restaurant._id;
-    const { 
-      startDate, 
-      endDate, 
-      paymentMethod, 
-      status,
-      page = 1,
-      limit = 20
-    } = req.query;
     
-    console.log(`📜 Getting withdrawal history for restaurant: ${restaurantId}`);
+    console.log('📊 Getting ALL orders for day (unfiltered):', {
+      date,
+      paymentMethod: paymentMethod || 'all methods',
+      restaurantId: restaurantId.toString(),
+      restaurantName: req.user.restaurant.name
+    });
     
-    let query = { restaurant: restaurantId };
+    // Create date range
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
     
-    // Add date filter if provided
-    if (startDate || endDate) {
-      query.date = {};
-      if (startDate) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        query.date.$gte = start;
-      }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        query.date.$lte = end;
-      }
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+    
+    console.log('📅 Date range:', {
+      start: startDate.toISOString(),
+      end: endDate.toISOString()
+    });
+    
+    // Load Order model
+    const Order = require('./models/Order');
+    
+    // Build simple query - NO eligibility filters
+    const query = {
+      restaurant: restaurantId,
+      createdAt: { $gte: startDate, $lte: endDate }
+    };
+    
+    // Optional: Filter by payment method if provided
+    if (paymentMethod && paymentMethod !== 'all') {
+      query['paymentDetails.method'] = { 
+        $regex: paymentMethod, 
+        $options: 'i' 
+      };
     }
     
-    if (paymentMethod) query.paymentMethod = { $regex: paymentMethod, $options: 'i' };
-    if (status) query.status = status;
+    console.log('🔎 Simple query (no filters):', JSON.stringify(query, null, 2));
     
-    // Get total count for pagination
-    const total = await PaymentWithdrawal.countDocuments(query);
-    
-    // Get paginated withdrawals
-    const withdrawals = await PaymentWithdrawal.find(query)
-      .populate('orders', 'orderNumber customerName totalAmount')
-      .populate('authorizedBy', 'name email')
-      .sort({ date: -1, createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit))
+    // Get ALL orders - no additional filters
+    const allOrders = await Order.find(query)
+      .select('orderNumber customerName totalAmount amountPaid amountPaidWithCharges paymentStatus paymentDetails withdrawn createdAt')
+      .sort({ createdAt: -1 })
       .lean();
     
-    // Calculate totals
-    const totals = withdrawals.reduce((acc, withdrawal) => {
-      acc.totalAmount += withdrawal.withdrawalAmount || 0;
-      acc.totalFees += withdrawal.withdrawalFee || 0;
-      acc.totalProfit += withdrawal.netProfit || 0;
-      acc.completedCount += withdrawal.status === 'completed' ? 1 : 0;
-      acc.failedCount += withdrawal.status === 'failed' ? 1 : 0;
-      acc.processingCount += withdrawal.status === 'processing' ? 1 : 0;
-      return acc;
-    }, { 
-      totalAmount: 0, 
-      totalFees: 0, 
-      totalProfit: 0,
-      completedCount: 0,
-      failedCount: 0,
-      processingCount: 0
+    console.log(`📊 Found ${allOrders.length} total orders on ${date}`);
+    
+    // Calculate comprehensive statistics
+    const stats = {
+      totalOrders: allOrders.length,
+      paidOrders: 0,
+      pendingOrders: 0,
+      withdrawnOrders: 0,
+      availableForWithdrawal: 0,
+      totalRevenue: 0,
+      totalServiceCharges: 0,
+      byPaymentMethod: {},
+      byStatus: {}
+    };
+    
+    // Process each order to calculate stats
+    allOrders.forEach(order => {
+      // Payment status counts
+      stats.byStatus[order.paymentStatus] = (stats.byStatus[order.paymentStatus] || 0) + 1;
+      
+      if (order.paymentStatus === 'paid') {
+        stats.paidOrders++;
+      } else if (order.paymentStatus === 'pending') {
+        stats.pendingOrders++;
+      }
+      
+      // Withdrawn status
+      if (order.withdrawn) {
+        stats.withdrawnOrders++;
+      }
+      
+      // Revenue calculations (only for paid orders)
+      if (order.paymentStatus === 'paid') {
+        stats.totalRevenue += order.totalAmount || 0;
+        
+        // Calculate service charge
+        const serviceCharge = (order.amountPaidWithCharges || 0) - (order.totalAmount || 0);
+        if (serviceCharge > 0) {
+          stats.totalServiceCharges += serviceCharge;
+        }
+        
+        // Check eligibility for withdrawal
+        const isEligible = !order.withdrawn && serviceCharge > 0;
+        if (isEligible) {
+          stats.availableForWithdrawal++;
+        }
+      }
+      
+      // Payment method breakdown
+      const method = order.paymentDetails?.method || 'Unknown';
+      stats.byPaymentMethod[method] = (stats.byPaymentMethod[method] || 0) + 1;
+    });
+    
+    // Format orders for response
+    const formattedOrders = allOrders.map(order => {
+      const serviceCharge = (order.amountPaidWithCharges || 0) - (order.totalAmount || 0);
+      const paymentMethod = order.paymentDetails?.method || 'Unknown';
+      
+      return {
+        id: order._id,
+        orderNumber: order.orderNumber,
+        customerName: order.customerName || 'Walk-in Customer',
+        totalAmount: order.totalAmount || 0,
+        amountPaid: order.amountPaid || 0,
+        amountPaidWithCharges: order.amountPaidWithCharges || 0,
+        serviceCharge: serviceCharge,
+        paymentMethod: paymentMethod,
+        paymentStatus: order.paymentStatus,
+        withdrawn: order.withdrawn || false,
+        createdAt: order.createdAt,
+        formattedDate: order.createdAt ? new Date(order.createdAt).toLocaleDateString() : '',
+        formattedTime: order.createdAt ? new Date(order.createdAt).toLocaleTimeString() : '',
+        
+        // Eligibility indicators (for UI)
+        isPaid: order.paymentStatus === 'paid',
+        hasServiceCharge: serviceCharge > 0,
+        isAvailableForWithdrawal: order.paymentStatus === 'paid' && !order.withdrawn && serviceCharge > 0,
+        
+        // Status badges
+        statusBadge: order.paymentStatus === 'paid' ? 
+          (order.withdrawn ? 'Withdrawn' : 'Available for Withdrawal') : 
+          order.paymentStatus === 'pending' ? 'Pending Payment' : 'Other'
+      };
     });
     
     res.json({
       success: true,
-      message: 'Withdrawal history retrieved',
-      withdrawals,
-      totals,
-      pagination: {
-        total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        pages: Math.ceil(total / limit)
-      },
+      message: 'Daily orders summary retrieved',
+      date,
+      paymentMethod: paymentMethod || 'all',
+      
+      // Comprehensive statistics
       summary: {
-        totalWithdrawals: total,
-        ...totals
+        date,
+        totalOrders: stats.totalOrders,
+        
+        // Payment status breakdown
+        paymentStatus: {
+          paid: stats.paidOrders,
+          pending: stats.pendingOrders,
+          others: stats.totalOrders - stats.paidOrders - stats.pendingOrders
+        },
+        
+        // Withdrawal status
+        withdrawalStatus: {
+          withdrawn: stats.withdrawnOrders,
+          available: stats.availableForWithdrawal,
+          notEligible: stats.paidOrders - stats.withdrawnOrders - stats.availableForWithdrawal
+        },
+        
+        // Financial summary
+        financials: {
+          totalRevenue: stats.totalRevenue,
+          totalServiceCharges: stats.totalServiceCharges,
+          averageOrderValue: stats.paidOrders > 0 ? stats.totalRevenue / stats.paidOrders : 0
+        },
+        
+        // Payment method breakdown
+        paymentMethods: Object.entries(stats.byPaymentMethod).map(([method, count]) => ({
+          method,
+          count,
+          percentage: Math.round((count / stats.totalOrders) * 100)
+        })),
+        
+        // Status breakdown
+        statusBreakdown: Object.entries(stats.byStatus).map(([status, count]) => ({
+          status,
+          count,
+          percentage: Math.round((count / stats.totalOrders) * 100)
+        }))
+      },
+      
+      // The complete list of orders
+      orders: formattedOrders,
+      
+      // Quick stats for dashboard
+      quickStats: {
+        ordersToday: stats.totalOrders,
+        revenueToday: stats.totalRevenue,
+        availableForWithdrawal: stats.availableForWithdrawal,
+        withdrawalEligibilityRate: stats.paidOrders > 0 ? 
+          Math.round((stats.availableForWithdrawal / stats.paidOrders) * 100) : 0
       }
     });
+    
   } catch (error) {
-    console.error('❌ Failed to get withdrawal history:', error);
+    console.error('❌ Failed to get daily orders summary:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Failed to get withdrawal history', 
+      error: 'Failed to get daily orders summary', 
       details: error.message 
     });
   }
