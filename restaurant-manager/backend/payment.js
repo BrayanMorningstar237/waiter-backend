@@ -82,6 +82,188 @@ router.post('/disburse-payment', async (req, res) => {
 });
 
 // ================================
+// WITHDRAWAL DISBURSEMENT (Payout to Restaurant)
+// ================================
+router.post('/withdrawals/disburse', async (req, res) => {
+  try {
+    const { 
+      amount, 
+      phoneNumber, 
+      withdrawalId,
+      provider = 'mtn' 
+    } = req.body;
+
+    if (!amount || !phoneNumber || !withdrawalId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Amount, phone number, and withdrawal ID are required',
+      });
+    }
+
+    console.log(`💰 Processing withdrawal disbursement:`, {
+      withdrawalId,
+      amount: `${amount} XAF`,
+      phoneNumber,
+      provider: provider.toUpperCase()
+    });
+
+    // Call Mynkwa disbursement API
+    const response = await axios.post(
+      'https://api.pay.mynkwa.com/disburse',
+      {
+        amount: Number(amount),
+        phoneNumber,
+        provider: provider.toUpperCase()
+      },
+      {
+        headers: {
+          'X-API-Key': process.env.MYNKWA_API_KEY,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    console.log('✅ Withdrawal disbursement initiated:', {
+      withdrawalId,
+      transactionId: response.data.id,
+      status: response.data.status,
+      amount: response.data.amount,
+      provider: provider.toUpperCase()
+    });
+
+    // Store SSE connection for withdrawal status
+    if (response.data.id) {
+      // You can implement SSE for withdrawal status if needed
+    }
+
+    res.json({
+      success: true,
+      data: response.data,
+      withdrawalId: withdrawalId,
+      message: `Withdrawal disbursement to ${phoneNumber} initiated via ${provider.toUpperCase()}`,
+      timestamp: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('❌ Withdrawal disbursement failed:', {
+      error: error.response?.data || error.message,
+      withdrawalId: req.body.withdrawalId
+    });
+    
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: error.response?.data || error.message,
+      withdrawalId: req.body.withdrawalId
+    });
+  }
+});
+
+// ================================
+// WITHDRAWAL STATUS STREAM
+// ================================
+router.get('/withdrawals/:id/status-stream', async (req, res) => {
+  const { id: withdrawalId } = req.params;
+  
+  console.log(`💰 New SSE connection for withdrawal status: ${withdrawalId}`);
+  
+  // Set headers for SSE
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no'
+  });
+
+  // Send initial connection event
+  res.write(`data: ${JSON.stringify({
+    type: 'connected',
+    message: 'Withdrawal status SSE connection established',
+    withdrawalId: withdrawalId,
+    timestamp: new Date().toISOString()
+  })}\n\n`);
+
+  // Store the connection
+  if (!paymentConnections.has(withdrawalId)) {
+    paymentConnections.set(withdrawalId, new Set());
+  }
+  paymentConnections.get(withdrawalId).add(res);
+
+  // Polling for withdrawal status (similar to payment status)
+  let pollingInterval;
+  const pollWithdrawalStatus = async () => {
+    try {
+      console.log(`🔄 Polling withdrawal status for ${withdrawalId}`);
+      
+      // This would query your database for withdrawal status
+      // For now, we'll simulate
+      const mockStatus = {
+        status: 'completed',
+        amount: 100000,
+        transactionId: `TXN-${Date.now()}`,
+        timestamp: new Date().toISOString()
+      };
+      
+      res.write(`data: ${JSON.stringify({
+        type: 'withdrawal_status',
+        withdrawalId: withdrawalId,
+        status: mockStatus.status,
+        data: mockStatus,
+        timestamp: new Date().toISOString()
+      })}\n\n`);
+      
+      if (mockStatus.status === 'completed' || mockStatus.status === 'failed') {
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+        }
+        res.write(`data: ${JSON.stringify({
+          type: 'withdrawal_final',
+          withdrawalId: withdrawalId,
+          status: mockStatus.status,
+          isFinal: true,
+          timestamp: new Date().toISOString()
+        })}\n\n`);
+        
+        // Clean up connection
+        if (paymentConnections.has(withdrawalId)) {
+          paymentConnections.get(withdrawalId).delete(res);
+          if (paymentConnections.get(withdrawalId).size === 0) {
+            paymentConnections.delete(withdrawalId);
+          }
+        }
+        
+        res.end();
+      }
+      
+    } catch (error) {
+      console.error(`❌ Error polling withdrawal ${withdrawalId}:`, error.message);
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        withdrawalId: withdrawalId,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      })}\n\n`);
+    }
+  };
+
+  // Start polling
+  pollingInterval = setInterval(pollWithdrawalStatus, 5000);
+
+  // Remove connection when client closes
+  req.on('close', () => {
+    console.log(`💰 SSE connection closed for withdrawal: ${withdrawalId}`);
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+    }
+    if (paymentConnections.has(withdrawalId)) {
+      paymentConnections.get(withdrawalId).delete(res);
+      if (paymentConnections.get(withdrawalId).size === 0) {
+        paymentConnections.delete(withdrawalId);
+      }
+    }
+  });
+});
+// ================================
 // COLLECT PAYMENT (Mobile Money)
 // ================================
 router.post('/payments/collect', async (req, res) => {

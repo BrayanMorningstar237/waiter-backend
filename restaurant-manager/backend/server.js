@@ -18,6 +18,8 @@ const Category = require('./models/Category');
 const MenuItem = require('./models/MenuItem');
 const Table = require('./models/Table');
 
+const PaymentWithdrawal = require('./models/PaymentWithdrawal');
+const SecuritySetting = require('./models/SecuritySetting');
 // Simple in-memory store for SSE connections
 const sseConnections = new Map();
 
@@ -289,6 +291,1327 @@ app.get('/api/sse-debug', (req, res) => {
   });
 
   res.json(debugInfo);
+});
+
+
+// ============================================================================
+// PAYMENT WITHDRAWAL ROUTES (PROTECTED)
+// ============================================================================
+
+// Get withdrawal security code info (restaurant-specific)
+app.get('/api/withdrawals/security-info', auth, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant._id;
+    
+    // Only restaurant admin and super admin can access security info
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ 
+        error: 'Access denied - admin privileges required' 
+      });
+    }
+
+    const securitySetting = await SecuritySetting.findOne({
+      restaurant: restaurantId,
+      type: 'withdrawal_security_code'
+    })
+    .populate('restaurant', 'name contact.email logo isActive') // ADD THIS
+    .populate('lastUpdatedBy', 'name email role'); // ADD THIS
+    
+    // Create default if doesn't exist
+    if (!securitySetting) {
+      const Restaurant = require('./models/Restaurant');
+      const restaurant = await Restaurant.findById(restaurantId);
+      
+      const defaultSetting = new SecuritySetting({
+        restaurant: restaurantId,
+        type: 'withdrawal_security_code',
+        value: 'ADMIN123',
+        lastUpdatedBy: req.user._id,
+        description: `Security code for ${restaurant?.name || 'restaurant'} withdrawals`,
+        isActive: true
+      });
+      
+      await defaultSetting.save();
+      
+      // Populate after save
+      await defaultSetting.populate('restaurant', 'name contact.email logo isActive');
+      await defaultSetting.populate('lastUpdatedBy', 'name email role');
+      
+      return res.json({
+        message: 'Default security code created',
+        action: 'created',
+        restaurant: {
+          id: restaurantId,
+          name: restaurant?.name || 'Unknown Restaurant',
+          email: restaurant?.contact?.email,
+          isActive: restaurant?.isActive
+        },
+        securityInfo: {
+          id: defaultSetting._id,
+          isActive: defaultSetting.isActive,
+          description: defaultSetting.description,
+          lastUpdated: defaultSetting.updatedAt,
+          failedAttempts: defaultSetting.failedAttempts,
+          isLocked: defaultSetting.lockUntil && defaultSetting.lockUntil > new Date(),
+          lockUntil: defaultSetting.lockUntil,
+          changeHistoryCount: defaultSetting.changeHistory?.length || 0,
+          lastUpdatedBy: {
+            id: defaultSetting.lastUpdatedBy?._id,
+            name: defaultSetting.lastUpdatedBy?.name,
+            email: defaultSetting.lastUpdatedBy?.email,
+            role: defaultSetting.lastUpdatedBy?.role
+          }
+        },
+        note: 'Please update your security code for better security'
+      });
+    }
+    
+    res.json({
+      message: 'Security information retrieved',
+      restaurant: {
+        id: restaurantId,
+        name: securitySetting.restaurant?.name || 'Unknown Restaurant',
+        email: securitySetting.restaurant?.contact?.email,
+        logo: securitySetting.restaurant?.logo,
+        isActive: securitySetting.restaurant?.isActive
+      },
+      securityInfo: {
+        id: securitySetting._id,
+        isActive: securitySetting.isActive,
+        failedAttempts: securitySetting.failedAttempts,
+        lastUpdated: securitySetting.updatedAt,
+        description: securitySetting.description,
+        lastUpdatedBy: securitySetting.lastUpdatedBy ? {
+          id: securitySetting.lastUpdatedBy._id,
+          name: securitySetting.lastUpdatedBy.name,
+          email: securitySetting.lastUpdatedBy.email,
+          role: securitySetting.lastUpdatedBy.role
+        } : null,
+        isLocked: securitySetting.lockUntil && securitySetting.lockUntil > new Date(),
+        lockUntil: securitySetting.lockUntil,
+        changeHistoryCount: securitySetting.changeHistory?.length || 0,
+        recentChanges: securitySetting.changeHistory?.slice(-3) || [] // Last 3 changes
+      },
+      userContext: {
+        role: req.user.role,
+        isSuperAdmin: req.user.role === 'super_admin',
+        canModify: req.user.role === 'admin' || req.user.role === 'super_admin'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to get security info:', error);
+    res.status(500).json({ error: 'Failed to get security information', details: error.message });
+  }
+});
+
+// Update withdrawal security code (restaurant admin or super admin only)
+app.put('/api/withdrawals/security-code', auth, async (req, res) => {
+  try {
+    // Only restaurant admin or super admin can change security code
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ 
+        error: 'Access denied - admin privileges required' 
+      });
+    }
+
+    const { newCode, currentCode, reason, restaurantId: targetRestaurantId } = req.body;
+    
+    // SUPER ADMIN can specify which restaurant to update
+    const restaurantId = req.user.role === 'super_admin' && targetRestaurantId 
+      ? targetRestaurantId 
+      : req.user.restaurant._id;
+    
+    if (!newCode || newCode.length < 4) {
+      return res.status(400).json({ 
+        error: 'New security code must be at least 4 characters' 
+      });
+    }
+
+    // Get restaurant-specific security setting
+    const securitySetting = await SecuritySetting.findOne({
+      restaurant: restaurantId,
+      type: 'withdrawal_security_code'
+    }).populate('restaurant', 'name contact.email');
+    
+    if (!securitySetting) {
+      return res.status(404).json({ 
+        error: 'Security setting not found for this restaurant' 
+      });
+    }
+    
+    // Verify current code (unless super admin is forcing update)
+    if (currentCode && req.user.role !== 'super_admin') {
+      try {
+        const isValid = await securitySetting.verifyCode(currentCode);
+        if (!isValid) {
+          return res.status(400).json({ 
+            error: 'Current security code is incorrect' 
+          });
+        }
+      } catch (error) {
+        if (error.message.includes('locked')) {
+          return res.status(423).json({ 
+            error: error.message 
+          });
+        }
+        throw error;
+      }
+    }
+    
+    // For super admin: allow reset without current code
+    if (!currentCode && req.user.role !== 'super_admin') {
+      return res.status(400).json({ 
+        error: 'Current security code is required' 
+      });
+    }
+
+    // Store old value for history
+    securitySetting._originalValue = securitySetting.value;
+    securitySetting._changeReason = reason || `Security update by ${req.user.name} (${req.user.role})`;
+    
+    // Update security code (will be hashed in pre-save)
+    securitySetting.value = newCode;
+    securitySetting.lastUpdatedBy = req.user._id;
+    securitySetting.failedAttempts = 0; // Reset failed attempts
+    securitySetting.lockUntil = null; // Unlock if locked
+    
+    await securitySetting.save();
+    
+    // Populate after save for response
+    await securitySetting.populate('restaurant', 'name contact.email');
+    await securitySetting.populate('lastUpdatedBy', 'name email role');
+
+    console.log(`🔐 Security code updated for restaurant ${securitySetting.restaurant?.name} by ${req.user.email}`);
+    
+    res.json({
+      message: 'Security code updated successfully',
+      updatedAt: securitySetting.updatedAt,
+      restaurant: {
+        id: restaurantId,
+        name: securitySetting.restaurant?.name || 'Unknown Restaurant',
+        email: securitySetting.restaurant?.contact?.email
+      },
+      updatedBy: {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role
+      },
+      changeCount: securitySetting.changeHistory?.length || 0,
+      note: req.user.role === 'super_admin' ? 'Super admin forced update' : 'Admin updated'
+    });
+  } catch (error) {
+    console.error('❌ Failed to update security code:', error);
+    res.status(500).json({ 
+      error: 'Failed to update security code', 
+      details: error.message 
+    });
+  }
+});
+
+// Super admin: Get ALL restaurant security settings
+app.get('/api/admin/security-settings', auth, async (req, res) => {
+  try {
+    // Only super admin can access all settings
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ 
+        error: 'Access denied - super admin privileges required' 
+      });
+    }
+
+    const { search, isActive, isLocked } = req.query;
+    
+    let query = { type: 'withdrawal_security_code' };
+    
+    // Add search filter
+    if (search) {
+      // This would require a more complex lookup if searching by restaurant name
+      const Restaurant = require('./models/Restaurant');
+      const restaurants = await Restaurant.find({
+        name: { $regex: search, $options: 'i' }
+      }).select('_id');
+      
+      query.restaurant = { $in: restaurants.map(r => r._id) };
+    }
+    
+    if (isActive !== undefined) {
+      query.isActive = isActive === 'true';
+    }
+    
+    if (isLocked === 'true') {
+      query.lockUntil = { $gt: new Date() };
+    } else if (isLocked === 'false') {
+      query.$or = [
+        { lockUntil: null },
+        { lockUntil: { $lte: new Date() } }
+      ];
+    }
+
+    const securitySettings = await SecuritySetting.find(query)
+      .populate('restaurant', 'name contact.email logo isActive createdAt')
+      .populate('lastUpdatedBy', 'name email role')
+      .sort({ updatedAt: -1 })
+      .lean();
+    
+    // Format response with restaurant info
+    const settingsWithRestaurant = securitySettings.map(setting => ({
+      id: setting._id,
+      restaurant: {
+        id: setting.restaurant?._id,
+        name: setting.restaurant?.name || 'Unknown Restaurant',
+        email: setting.restaurant?.contact?.email,
+        logo: setting.restaurant?.logo,
+        isActive: setting.restaurant?.isActive,
+        createdAt: setting.restaurant?.createdAt
+      },
+      securityInfo: {
+        isActive: setting.isActive,
+        failedAttempts: setting.failedAttempts,
+        lastUpdated: setting.updatedAt,
+        description: setting.description,
+        isLocked: setting.lockUntil && setting.lockUntil > new Date(),
+        lockUntil: setting.lockUntil,
+        changeHistoryCount: setting.changeHistory?.length || 0
+      },
+      lastUpdatedBy: setting.lastUpdatedBy ? {
+        id: setting.lastUpdatedBy._id,
+        name: setting.lastUpdatedBy.name,
+        email: setting.lastUpdatedBy.email,
+        role: setting.lastUpdatedBy.role
+      } : null
+    }));
+    
+    res.json({
+      message: 'All security settings retrieved',
+      settings: settingsWithRestaurant,
+      count: settingsWithRestaurant.length,
+      summary: {
+        total: settingsWithRestaurant.length,
+        active: settingsWithRestaurant.filter(s => s.securityInfo.isActive).length,
+        locked: settingsWithRestaurant.filter(s => s.securityInfo.isLocked).length,
+        restaurantsWithSettings: [...new Set(settingsWithRestaurant.map(s => s.restaurant.id))].length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to get security settings:', error);
+    res.status(500).json({ error: 'Failed to get security settings', details: error.message });
+  }
+});
+
+// ============================================================================
+// SUPER ADMIN: CREATE OR UPDATE SECURITY SETTING FOR ANY RESTAURANT (FIXED VERSION)
+// ============================================================================
+app.post('/api/admin/security-settings/create-or-update', auth, async (req, res) => {
+  try {
+    // Only super admin can use this endpoint
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({ 
+        success: false,
+        error: 'Access denied - super admin privileges required' 
+      });
+    }
+
+    const { restaurantId, securityCode, reason } = req.body;
+    
+    if (!restaurantId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Restaurant ID is required' 
+      });
+    }
+    
+    if (!securityCode || typeof securityCode !== 'string') {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Security code is required and must be a string' 
+      });
+    }
+    
+    if (securityCode.length < 4) {
+      return res.status(400).json({ 
+        success: false,
+        error: `Security code must be at least 4 characters. You provided "${securityCode}" which has ${securityCode.length} characters.` 
+      });
+    }
+
+    console.log(`🔐 Creating/updating security code for restaurant ${restaurantId}`);
+    console.log(`🔑 Code: "${securityCode}" (${securityCode.length} characters)`);
+    
+    // Verify restaurant exists using mongoose.model() to avoid require issues
+    const Restaurant = mongoose.model('Restaurant');
+    const restaurant = await Restaurant.findById(restaurantId);
+    
+    if (!restaurant) {
+      return res.status(404).json({ 
+        success: false,
+        error: `Restaurant not found with ID: ${restaurantId}` 
+      });
+    }
+
+    console.log(`🏪 Found restaurant: ${restaurant.name}`);
+    
+    // Check if security setting already exists
+    let securitySetting = await SecuritySetting.findOne({
+      restaurant: restaurantId,
+      type: 'withdrawal_security_code'
+    });
+    
+    let action = 'updated';
+    
+    if (!securitySetting) {
+      // Create new security setting
+      action = 'created';
+      securitySetting = new SecuritySetting({
+        restaurant: restaurantId,
+        type: 'withdrawal_security_code',
+        value: securityCode,
+        lastUpdatedBy: req.user._id,
+        description: `Security code for ${restaurant.name} withdrawals`,
+        isActive: true,
+        _changeReason: reason || `Initial setup by super admin ${req.user.name}`
+      });
+      console.log(`📝 Creating NEW security setting`);
+    } else {
+      // Update existing setting
+      console.log(`📝 UPDATING existing security setting`);
+      securitySetting._originalValue = securitySetting.value;
+      securitySetting._changeReason = reason || `Security update by super admin ${req.user.name}`;
+      securitySetting.value = securityCode;
+      securitySetting.lastUpdatedBy = req.user._id;
+      securitySetting.failedAttempts = 0;
+      securitySetting.lockUntil = null;
+      securitySetting.isActive = true;
+    }
+    
+    console.log(`💾 Saving security setting...`);
+    await securitySetting.save();
+    console.log(`✅ Security setting saved successfully`);
+    
+    res.status(action === 'created' ? 201 : 200).json({
+      success: true,
+      message: `Security setting ${action} successfully`,
+      action: action,
+      restaurant: {
+        id: restaurant._id,
+        name: restaurant.name,
+        email: restaurant.contact?.email,
+        isActive: restaurant.isActive
+      },
+      securitySetting: {
+        id: securitySetting._id,
+        isActive: securitySetting.isActive,
+        lastUpdated: securitySetting.updatedAt,
+        failedAttempts: securitySetting.failedAttempts,
+        isLocked: securitySetting.lockUntil && securitySetting.lockUntil > new Date(),
+        description: securitySetting.description
+      },
+      updatedBy: {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role
+      },
+      debug: {
+        codeLength: securityCode.length,
+        restaurantId: restaurantId
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Failed to create/update security setting:', error);
+    console.error('❌ Error stack:', error.stack);
+    
+    // Handle duplicate key error specifically
+    if (error.code === 11000) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Duplicate security setting. Please check your database indexes.',
+        details: 'You may need to drop the unique index on "type" field and create a compound index on {restaurant: 1, type: 1}'
+      });
+    }
+    
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        success: false,
+        error: 'Validation failed', 
+        details: errors.join(', ') 
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to create/update security setting', 
+      details: error.message
+    });
+  }
+});
+
+// Update withdrawal security code (restaurant admin or super admin only)
+app.put('/api/withdrawals/security-code', auth, async (req, res) => {
+  try {
+    // Only restaurant admin or super admin can change security code
+    if (req.user.role !== 'admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ 
+        error: 'Access denied - admin privileges required' 
+      });
+    }
+
+    const { newCode, currentCode, reason, restaurantId: targetRestaurantId } = req.body;
+    
+    // SUPER ADMIN can specify which restaurant to update
+    const restaurantId = req.user.role === 'super_admin' && targetRestaurantId 
+      ? targetRestaurantId 
+      : req.user.restaurant._id;
+    
+    if (!newCode || newCode.length < 4) {
+      return res.status(400).json({ 
+        error: 'New security code must be at least 4 characters' 
+      });
+    }
+
+    // Get restaurant-specific security setting
+    let securitySetting = await SecuritySetting.findOne({
+      restaurant: restaurantId,
+      type: 'withdrawal_security_code'
+    });
+    
+    // If setting doesn't exist, create it (for super admin only)
+    if (!securitySetting) {
+      if (req.user.role !== 'super_admin') {
+        return res.status(404).json({ 
+          error: 'Security setting not found for this restaurant. Please contact super admin.' 
+        });
+      }
+      
+      // Super admin can create new setting
+      const Restaurant = require('./models/Restaurant');
+      const restaurant = await Restaurant.findById(restaurantId);
+      
+      if (!restaurant) {
+        return res.status(404).json({ error: 'Restaurant not found' });
+      }
+      
+      securitySetting = new SecuritySetting({
+        restaurant: restaurantId,
+        type: 'withdrawal_security_code',
+        value: newCode,
+        lastUpdatedBy: req.user._id,
+        description: `Security code for ${restaurant.name} withdrawals`,
+        isActive: true
+      });
+      
+      await securitySetting.save();
+      
+      res.status(201).json({
+        message: 'Security setting created and code set successfully',
+        action: 'created',
+        restaurant: {
+          id: restaurantId,
+          name: restaurant.name,
+          email: restaurant.contact?.email
+        },
+        updatedBy: {
+          id: req.user._id,
+          name: req.user.name,
+          email: req.user.email,
+          role: req.user.role
+        },
+        note: 'Super admin created new security setting'
+      });
+      return;
+    }
+    
+    // Verify current code (unless super admin is forcing update)
+    if (currentCode && req.user.role !== 'super_admin') {
+      try {
+        const isValid = await securitySetting.verifyCode(currentCode);
+        if (!isValid) {
+          return res.status(400).json({ 
+            error: 'Current security code is incorrect' 
+          });
+        }
+      } catch (error) {
+        if (error.message.includes('locked')) {
+          return res.status(423).json({ 
+            error: error.message 
+          });
+        }
+        throw error;
+      }
+    }
+    
+    // For super admin: allow reset without current code
+    if (!currentCode && req.user.role !== 'super_admin') {
+      return res.status(400).json({ 
+        error: 'Current security code is required' 
+      });
+    }
+
+    // Store old value for history
+    securitySetting._originalValue = securitySetting.value;
+    securitySetting._changeReason = reason || `Security update by ${req.user.name} (${req.user.role})`;
+    
+    // Update security code (will be hashed in pre-save)
+    securitySetting.value = newCode;
+    securitySetting.lastUpdatedBy = req.user._id;
+    securitySetting.failedAttempts = 0; // Reset failed attempts
+    securitySetting.lockUntil = null; // Unlock if locked
+    
+    await securitySetting.save();
+    
+    // Populate after save for response
+    await securitySetting.populate('restaurant', 'name contact.email');
+    await securitySetting.populate('lastUpdatedBy', 'name email role');
+
+    console.log(`🔐 Security code updated for restaurant ${securitySetting.restaurant?.name} by ${req.user.email}`);
+    
+    res.json({
+      message: 'Security code updated successfully',
+      updatedAt: securitySetting.updatedAt,
+      restaurant: {
+        id: restaurantId,
+        name: securitySetting.restaurant?.name || 'Unknown Restaurant',
+        email: securitySetting.restaurant?.contact?.email
+      },
+      updatedBy: {
+        id: req.user._id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role
+      },
+      changeCount: securitySetting.changeHistory?.length || 0,
+      note: req.user.role === 'super_admin' ? 'Super admin forced update' : 'Admin updated'
+    });
+  } catch (error) {
+    console.error('❌ Failed to update security code:', error);
+    res.status(500).json({ 
+      error: 'Failed to update security code', 
+      details: error.message 
+    });
+  }
+});
+// Update the /api/withdrawals/available-orders endpoint in server.js
+app.get('/api/withdrawals/available-orders', auth, async (req, res) => {
+  try {
+    const { date, paymentMethod } = req.query;
+    
+    if (!date || !paymentMethod) {
+      return res.status(400).json({ 
+        error: 'Date and payment method are required' 
+      });
+    }
+
+    const restaurantId = req.user.restaurant._id;
+    
+    console.log('🔍 Getting orders for withdrawal (SIMPLIFIED):', {
+      date,
+      paymentMethod,
+      restaurantId: restaurantId.toString(),
+      restaurantName: req.user.restaurant.name
+    });
+    
+    // Create date range (simpler version)
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+    
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+    
+    console.log('📅 Date range:', {
+      start: startDate.toISOString(),
+      end: endDate.toISOString()
+    });
+    
+    // STEP 1: Get ALL orders for that day (like /api/orders does)
+    const allOrders = await Order.find({
+      restaurant: restaurantId,
+      createdAt: { $gte: startDate, $lte: endDate }
+    })
+      .populate('items.menuItem', 'name description image price rating likes nutrition')
+      .populate('table', 'tableNumber')
+      .populate('restaurant', 'name')
+      .sort({ createdAt: -1 });
+    
+    console.log(`📊 Found ${allOrders.length} total orders on ${date}`);
+    
+    // STEP 2: Filter using simple logic (NO database field dependency)
+    const eligibleOrders = allOrders.filter(order => {
+      // 1. Must be paid
+      if (order.paymentStatus !== 'paid') {
+        return false;
+      }
+      
+      // 2. Must not be withdrawn
+      if (order.withdrawn) {
+        return false;
+      }
+      
+      // 3. Payment method must match
+      const orderMethod = order.paymentDetails?.method || '';
+      if (!orderMethod.toLowerCase().includes(paymentMethod.toLowerCase())) {
+        return false;
+      }
+      
+      // 4. Must have positive service charge
+      const serviceCharge = order.amountPaidWithCharges - order.totalAmount;
+      if (serviceCharge <= 0) {
+        return false;
+      }
+      
+      return true;
+    });
+    
+    console.log(`✅ ${eligibleOrders.length} orders eligible for withdrawal`);
+    
+    // Log each order for debugging
+    allOrders.forEach(order => {
+      const orderMethod = order.paymentDetails?.method || '';
+      const serviceCharge = order.amountPaidWithCharges - order.totalAmount;
+      const isEligible = order.paymentStatus === 'paid' && 
+                        !order.withdrawn &&
+                        orderMethod.toLowerCase().includes(paymentMethod.toLowerCase()) &&
+                        serviceCharge > 0;
+      
+      console.log(`   • ${order.orderNumber}: ${orderMethod}, ` +
+        `Paid: ${order.paymentStatus === 'paid'}, ` +
+        `Withdrawn: ${order.withdrawn}, ` +
+        `Charge: ${serviceCharge}, ` +
+        `Eligible: ${isEligible}`);
+    });
+    
+    // Calculate totals
+    const totalAmount = eligibleOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+    const totalCustomerCharges = eligibleOrders.reduce((sum, order) => {
+      return sum + (order.amountPaidWithCharges - order.totalAmount);
+    }, 0);
+    
+    // Calculate withdrawal fee (2%)
+    const withdrawalFee = totalAmount * 0.02;
+    
+    // Calculate net profit/loss
+    const netProfit = totalCustomerCharges - withdrawalFee;
+    
+    res.json({
+      message: 'Available orders for withdrawal retrieved',
+      summary: {
+        date,
+        paymentMethod,
+        orderCount: eligibleOrders.length,
+        totalAmount,
+        totalCustomerCharges,
+        withdrawalFee,
+        netProfit,
+        status: netProfit >= 0 ? 'profitable' : 'loss'
+      },
+      orders: eligibleOrders.map(order => ({
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        customerName: order.customerName,
+        totalAmount: order.totalAmount,
+        amountPaidWithCharges: order.amountPaidWithCharges,
+        customerCharge: order.amountPaidWithCharges - order.totalAmount,
+        paymentDetails: order.paymentDetails,
+        createdAt: order.createdAt,
+        isEligibleForWithdrawalVirtual: true // Always true since we filtered
+      }))
+    });
+  } catch (error) {
+    console.error('❌ Failed to get available orders:', error);
+    res.status(500).json({ error: 'Failed to get available orders', details: error.message });
+  }
+});
+
+
+
+// ============================================================================
+// WITHDRAWAL HISTORY ENDPOINT
+// ============================================================================
+
+app.get('/api/withdrawals/history', auth, async (req, res) => {
+  try {
+    const restaurantId = req.user.restaurant._id;
+    const { 
+      startDate, 
+      endDate, 
+      paymentMethod, 
+      status,
+      page = 1,
+      limit = 20
+    } = req.query;
+    
+    console.log(`📜 Getting withdrawal history for restaurant: ${restaurantId}`);
+    
+    let query = { restaurant: restaurantId };
+    
+    // Add date filter if provided
+    if (startDate || endDate) {
+      query.date = {};
+      if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        query.date.$gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        query.date.$lte = end;
+      }
+    }
+    
+    if (paymentMethod) query.paymentMethod = { $regex: paymentMethod, $options: 'i' };
+    if (status) query.status = status;
+    
+    // Get total count for pagination
+    const total = await PaymentWithdrawal.countDocuments(query);
+    
+    // Get paginated withdrawals
+    const withdrawals = await PaymentWithdrawal.find(query)
+      .populate('orders', 'orderNumber customerName totalAmount')
+      .populate('authorizedBy', 'name email')
+      .sort({ date: -1, createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit))
+      .lean();
+    
+    // Calculate totals
+    const totals = withdrawals.reduce((acc, withdrawal) => {
+      acc.totalAmount += withdrawal.withdrawalAmount || 0;
+      acc.totalFees += withdrawal.withdrawalFee || 0;
+      acc.totalProfit += withdrawal.netProfit || 0;
+      acc.completedCount += withdrawal.status === 'completed' ? 1 : 0;
+      acc.failedCount += withdrawal.status === 'failed' ? 1 : 0;
+      acc.processingCount += withdrawal.status === 'processing' ? 1 : 0;
+      return acc;
+    }, { 
+      totalAmount: 0, 
+      totalFees: 0, 
+      totalProfit: 0,
+      completedCount: 0,
+      failedCount: 0,
+      processingCount: 0
+    });
+    
+    res.json({
+      success: true,
+      message: 'Withdrawal history retrieved',
+      withdrawals,
+      totals,
+      pagination: {
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit)
+      },
+      summary: {
+        totalWithdrawals: total,
+        ...totals
+      }
+    });
+  } catch (error) {
+    console.error('❌ Failed to get withdrawal history:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to get withdrawal history', 
+      details: error.message 
+    });
+  }
+});
+
+
+
+
+// Process withdrawal (call payment.js disbursement)
+app.post('/api/withdrawals/process', auth, async (req, res) => {
+  try {
+    const { 
+      date, 
+      paymentMethod,
+      securityCode,
+      authorizedRole,
+      paymentPhoneNumber,
+      notes
+    } = req.body;
+    
+    console.log('💰 WITHDRAWAL PROCESS REQUEST:', {
+      restaurant: req.user.restaurant.name,
+      date,
+      paymentMethod,
+      authorizedRole,
+      paymentPhoneNumber
+    });
+    
+    // 1. VALIDATE INPUTS
+    if (!date || !paymentMethod) {
+      return res.status(400).json({ error: 'Date and payment method are required' });
+    }
+    if (!securityCode) {
+      return res.status(400).json({ error: 'Security code is required' });
+    }
+    if (!authorizedRole) {
+      return res.status(400).json({ error: 'Authorization role is required' });
+    }
+    if (!paymentPhoneNumber) {
+      return res.status(400).json({ error: 'Payment phone number is required' });
+    }
+    
+    const restaurantId = req.user.restaurant._id;
+    
+    // 2. VERIFY SECURITY CODE (RESTAURANT-SPECIFIC)
+    console.log(`🔐 Verifying security code for restaurant: ${req.user.restaurant.name}`);
+    
+    // Get restaurant-specific security setting
+    const securitySetting = await SecuritySetting.findOne({
+      restaurant: restaurantId,
+      type: 'withdrawal_security_code'
+    });
+    
+    if (!securitySetting) {
+      console.log(`⚠️ No security setting found for restaurant: ${req.user.restaurant.name}`);
+      return res.status(400).json({ 
+        error: 'Security code not configured for this restaurant. Please contact admin.' 
+      });
+    }
+    
+    if (!securitySetting.isActive) {
+      console.log(`⚠️ Security setting is not active for restaurant: ${req.user.restaurant.name}`);
+      return res.status(400).json({ 
+        error: 'Security code is not active for this restaurant. Please contact admin.' 
+      });
+    }
+    
+    try {
+      const isCodeValid = await securitySetting.verifyCode(securityCode);
+      
+      if (!isCodeValid) {
+        console.log(`❌ Invalid security code attempt for restaurant: ${req.user.restaurant.name}`);
+        return res.status(400).json({ 
+          error: 'Invalid security code',
+          note: 'Please check your security code and try again.'
+        });
+      }
+    } catch (error) {
+      if (error.message.includes('locked')) {
+        console.log(`🔒 Security code locked for restaurant: ${req.user.restaurant.name}`);
+        return res.status(423).json({ 
+          error: error.message 
+        });
+      }
+      if (error.message.includes('Too many failed attempts')) {
+        console.log(`🚫 Too many failed attempts for restaurant: ${req.user.restaurant.name}`);
+        return res.status(429).json({ 
+          error: error.message 
+        });
+      }
+      console.error(`❌ Security verification error for restaurant ${req.user.restaurant.name}:`, error);
+      return res.status(500).json({ 
+        error: 'Security verification failed',
+        details: error.message 
+      });
+    }
+    
+    console.log(`✅ Security code verified for restaurant: ${req.user.restaurant.name}`);
+    
+    // 3. VERIFY AUTHORIZED ROLE
+    const validRoles = ['ADMIN', 'MANAGER', 'OWNER', 'SUPERVISOR'];
+    const normalizedRole = authorizedRole.toUpperCase();
+    
+    if (!validRoles.includes(normalizedRole)) {
+      return res.status(400).json({ 
+        error: 'Invalid authorization role',
+        validRoles: validRoles.map(r => r.toLowerCase())
+      });
+    }
+    console.log(`✅ Role verified: ${normalizedRole}`);
+    
+    // 4. GET ELIGIBLE ORDERS
+    console.log('📋 Finding eligible orders...');
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+    
+    // Get ALL orders for that day
+    const allOrders = await Order.find({
+      restaurant: restaurantId,
+      createdAt: { $gte: startDate, $lte: endDate }
+    })
+      .populate('items.menuItem', 'name description image price rating likes nutrition')
+      .populate('table', 'tableNumber')
+      .populate('restaurant', 'name')
+      .sort({ createdAt: -1 });
+    
+    console.log(`📊 Found ${allOrders.length} total orders on ${date}`);
+    
+    // Filter using simple logic
+    const eligibleOrders = allOrders.filter(order => {
+      // 1. Must be paid
+      if (order.paymentStatus !== 'paid') {
+        return false;
+      }
+      
+      // 2. Must not be withdrawn
+      if (order.withdrawn) {
+        return false;
+      }
+      
+      // 3. Payment method must match
+      const orderMethod = order.paymentDetails?.method || '';
+      const methodMatches = orderMethod.toLowerCase().includes(paymentMethod.toLowerCase());
+      if (!methodMatches) {
+        return false;
+      }
+      
+      // 4. Must have positive service charge
+      const serviceCharge = order.amountPaidWithCharges - order.totalAmount;
+      if (serviceCharge <= 0) {
+        return false;
+      }
+      
+      return true;
+    });
+    
+    console.log(`✅ ${eligibleOrders.length} orders eligible for withdrawal`);
+    
+    if (eligibleOrders.length === 0) {
+      return res.status(400).json({ 
+        error: 'No eligible orders found for withdrawal',
+        details: {
+          date,
+          paymentMethod,
+          totalOrdersFound: allOrders.length,
+          eligibilityCriteria: 'Orders must be: 1. Paid, 2. Not withdrawn, 3. Match payment method, 4. Have positive service charge'
+        }
+      });
+    }
+    
+    // 5. CALCULATE FINANCIALS
+    const withdrawalAmount = eligibleOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+    const totalServiceCharges = eligibleOrders.reduce((sum, order) => {
+      return sum + (order.amountPaidWithCharges - order.totalAmount);
+    }, 0);
+    const withdrawalFee = withdrawalAmount * 0.02; // 2% platform fee
+    const netProfit = totalServiceCharges - withdrawalFee;
+    
+    console.log('💰 Financial Summary:', {
+      orders: eligibleOrders.length,
+      amountToRestaurant: withdrawalAmount,
+      serviceCharges: totalServiceCharges,
+      platformFee: withdrawalFee,
+      platformProfit: netProfit
+    });
+    
+    // 6. GENERATE WITHDRAWAL NUMBER
+    const generateWithdrawalNumber = () => {
+      const timestamp = Date.now().toString().slice(-6);
+      const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+      return `WDL-${timestamp}-${random}`;
+    };
+    
+    // 7. CREATE WITHDRAWAL RECORD (INITIALLY PENDING)
+    console.log('📝 Creating withdrawal record...');
+    const withdrawal = new PaymentWithdrawal({
+      restaurant: restaurantId,
+      date: new Date(date),
+      paymentMethod: paymentMethod.toUpperCase(),
+      orders: eligibleOrders.map(o => o._id),
+      withdrawalAmount,
+      customerCharges: totalServiceCharges,
+      withdrawalFee,
+      netProfit,
+      securityCode: 'VERIFIED', // Don't store actual code
+      securitySettingId: securitySetting._id, // Reference to which security setting was used
+      authorizedBy: req.user._id,
+      authorizedRole: normalizedRole,
+      paymentPhoneNumber,
+      notes: notes || `Withdrawal processed by ${req.user.name || req.user.email}`,
+      status: 'pending', // Start as pending
+      bankDetails: {},
+      withdrawalNumber: generateWithdrawalNumber()
+    });
+    
+    await withdrawal.save();
+    console.log(`✅ Withdrawal record created: ${withdrawal.withdrawalNumber}`);
+    
+    // 8. CALL REAL PAYMENT.JS DISBURSEMENT ENDPOINT
+    console.log('🚀 Calling real payment.js disbursement endpoint...');
+    
+    try {
+      const axios = require('axios');
+      
+      // Prepare disbursement request for payment.js
+      const disbursementPayload = {
+        amount: withdrawalAmount,
+        phoneNumber: paymentPhoneNumber.replace(/[^0-9]/g, ''), // Clean phone number
+        withdrawalId: withdrawal._id.toString(),
+        provider: paymentMethod.toLowerCase().includes('orange') ? 'orange' : 'mtn'
+      };
+      
+      console.log('📤 Calling /api/disburse-payment with:', disbursementPayload);
+      
+      // Call your payment.js disbursement endpoint
+      const disbursementResponse = await axios.post(
+        `${process.env.BASE_URL || 'http://localhost:5000'}/api/disburse-payment`,
+        disbursementPayload,
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000 // 30 second timeout
+        }
+      );
+      
+      console.log('✅ Real disbursement response:', disbursementResponse.data);
+      
+      // 9. UPDATE WITHDRAWAL STATUS BASED ON RESPONSE
+      if (disbursementResponse.data.success === true) {
+        
+        // Payment initiated successfully
+        withdrawal.status = 'processing';
+        withdrawal.transactionId = disbursementResponse.data.data?.id || 
+                                  disbursementResponse.data.id || 
+                                  `PAY-${Date.now()}`;
+        withdrawal.providerResponse = disbursementResponse.data;
+        withdrawal.processedAt = new Date();
+        
+        await withdrawal.save();
+        
+        // 10. MARK ORDERS AS WITHDRAWN (only if payment initiated)
+        console.log('🏷️ Marking orders as withdrawn...');
+        await Order.updateMany(
+          { _id: { $in: eligibleOrders.map(o => o._id) } },
+          { 
+            $set: { 
+              withdrawn: true,
+              withdrawalId: withdrawal._id,
+              updatedAt: new Date()
+            }
+          }
+        );
+        
+        console.log(`✅ Marked ${eligibleOrders.length} orders as withdrawn`);
+        
+        // 11. SETUP SSE FOR PAYMENT STATUS MONITORING
+        // Note: The actual payment completion will be handled via webhook
+        
+        // 12. RETURN SUCCESS
+        res.status(201).json({
+          success: true,
+          message: 'Withdrawal initiated successfully',
+          withdrawal: {
+            id: withdrawal._id,
+            withdrawalNumber: withdrawal.withdrawalNumber,
+            date: withdrawal.date,
+            amount: withdrawal.withdrawalAmount,
+            fee: withdrawal.withdrawalFee,
+            netProfit: withdrawal.netProfit,
+            status: withdrawal.status,
+            transactionId: withdrawal.transactionId,
+            phoneNumber: withdrawal.paymentPhoneNumber,
+            processedAt: withdrawal.processedAt
+          },
+          financialSummary: {
+            withdrawalAmount,
+            totalServiceCharges,
+            withdrawalFee,
+            netProfit,
+            profitStatus: netProfit >= 0 ? `Profit: +${netProfit} CFA` : `Loss: ${netProfit} CFA`
+          },
+          orders: {
+            count: eligibleOrders.length,
+            orderNumbers: eligibleOrders.map(o => o.orderNumber),
+            orderIds: eligibleOrders.map(o => o._id)
+          },
+          disbursement: disbursementResponse.data,
+          note: 'Payment has been initiated. Status will be updated via webhook.'
+        });
+        
+      } else {
+        // Payment failed to initiate
+        withdrawal.status = 'failed';
+        withdrawal.providerResponse = disbursementResponse.data;
+        withdrawal.errorMessage = disbursementResponse.data.message || 'Payment disbursement failed to initiate';
+        await withdrawal.save();
+        
+        console.error('❌ Payment disbursement failed to initiate:', disbursementResponse.data);
+        
+        res.status(500).json({
+          success: false,
+          error: 'Payment disbursement failed to initiate',
+          details: disbursementResponse.data.message || 'Unknown error',
+          withdrawalRecord: {
+            id: withdrawal._id,
+            withdrawalNumber: withdrawal.withdrawalNumber,
+            status: 'failed'
+          },
+          note: 'Orders have NOT been marked as withdrawn. Please try again.'
+        });
+      }
+      
+    } catch (disbursementError) {
+      console.error('❌ Payment.js disbursement error:', {
+        message: disbursementError.message,
+        response: disbursementError.response?.data,
+        status: disbursementError.response?.status
+      });
+      
+      // Update withdrawal as failed
+      withdrawal.status = 'failed';
+      withdrawal.providerResponse = {
+        error: disbursementError.message,
+        response: disbursementError.response?.data
+      };
+      withdrawal.errorMessage = disbursementError.message;
+      await withdrawal.save();
+      
+      res.status(500).json({
+        success: false,
+        error: 'Payment service error',
+        details: disbursementError.response?.data || disbursementError.message,
+        withdrawalRecord: {
+          id: withdrawal._id,
+          withdrawalNumber: withdrawal.withdrawalNumber,
+          status: 'failed'
+        },
+        note: 'Orders have NOT been marked as withdrawn due to payment service error.'
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Withdrawal process failed:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const errors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        error: 'Validation failed', 
+        details: errors.join(', ') 
+      });
+    }
+    
+    // Handle security code errors
+    if (error.message.includes('Too many failed attempts')) {
+      return res.status(429).json({ 
+        error: 'Too many failed attempts. Please try again later.' 
+      });
+    }
+    
+    if (error.message.includes('Account locked')) {
+      return res.status(423).json({ 
+        error: 'Account temporarily locked. Please try again in 30 minutes.' 
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Withdrawal process failed', 
+      details: error.message 
+    });
+  }
+});
+
+
+// ============================================================================
+// PAYMENT WEBHOOK HANDLER FOR WITHDRAWAL STATUS UPDATES
+// ============================================================================
+
+app.post('/api/webhook/withdrawal-status', express.json(), async (req, res) => {
+  try {
+    const signature = req.headers['x-mynkwa-signature'];
+    const webhookSecret = process.env.MYNKWA_WEBHOOK_SECRET;
+    
+    console.log('📢 Withdrawal webhook received:', {
+      signature: signature ? 'present' : 'missing',
+      body: req.body
+    });
+    
+    // Verify signature if webhook secret is set
+    if (webhookSecret && signature) {
+      const crypto = require('crypto');
+      const computedSignature = crypto
+        .createHmac('sha256', webhookSecret)
+        .update(JSON.stringify(req.body))
+        .digest('hex');
+      
+      if (computedSignature !== signature) {
+        console.error('❌ Invalid webhook signature');
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+    }
+    
+    const { type, data } = req.body;
+    
+    if (!data || !data.id) {
+      console.error('❌ Invalid webhook data');
+      return res.status(400).json({ error: 'Invalid webhook data' });
+    }
+    
+    console.log(`🔍 Webhook type: ${type}, transaction ID: ${data.id}, status: ${data.status}`);
+    
+    // Find withdrawal by transactionId
+    const withdrawal = await PaymentWithdrawal.findOne({
+      transactionId: data.id
+    });
+    
+    if (!withdrawal) {
+      console.log('⚠️ Withdrawal not found for transaction:', data.id);
+      return res.json({ received: true });
+    }
+    
+    console.log(`📝 Updating withdrawal: ${withdrawal.withdrawalNumber}`);
+    
+    // Update withdrawal status based on webhook
+    if (data.status === 'success' || type === 'payment.success') {
+      withdrawal.status = 'completed';
+      withdrawal.completedAt = new Date();
+      withdrawal.providerResponse = { 
+        ...withdrawal.providerResponse,
+        webhook: req.body,
+        finalStatus: 'success'
+      };
+      console.log(`✅ Withdrawal ${withdrawal.withdrawalNumber} marked as COMPLETED`);
+      
+    } else if (data.status === 'failed' || type === 'payment.failed') {
+      withdrawal.status = 'failed';
+      withdrawal.errorMessage = data.reason || 'Payment failed';
+      withdrawal.providerResponse = { 
+        ...withdrawal.providerResponse,
+        webhook: req.body,
+        finalStatus: 'failed'
+      };
+      console.log(`❌ Withdrawal ${withdrawal.withdrawalNumber} marked as FAILED`);
+      
+    } else if (data.status === 'pending') {
+      // Keep as processing
+      withdrawal.providerResponse = { 
+        ...withdrawal.providerResponse,
+        webhook: req.body
+      };
+      console.log(`⏳ Withdrawal ${withdrawal.withdrawalNumber} still PENDING`);
+    }
+    
+    await withdrawal.save();
+    
+    // Notify via SSE if needed
+    if (sseConnections.has(withdrawal.restaurant.toString())) {
+      notifyRestaurant(withdrawal.restaurant.toString(), {
+        type: 'withdrawal_status_update',
+        withdrawalId: withdrawal._id,
+        withdrawalNumber: withdrawal.withdrawalNumber,
+        status: withdrawal.status,
+        transactionId: withdrawal.transactionId,
+        message: `Withdrawal ${withdrawal.status}`,
+        amount: withdrawal.withdrawalAmount,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`🔔 SSE notification sent for withdrawal ${withdrawal.withdrawalNumber}`);
+    }
+    
+    res.json({ received: true, withdrawalId: withdrawal._id, status: withdrawal.status });
+    
+  } catch (error) {
+    console.error('❌ Webhook processing error:', error);
+    res.status(500).json({ error: 'Webhook processing failed', details: error.message });
+  }
 });
 
 // ============================================================================
@@ -685,7 +2008,183 @@ app.get('/api/test-db', async (req, res) => {
 // ============================================================================
 // RESTAURANT SETTINGS ENDPOINTS
 // ============================================================================
-
+// Add this debug endpoint to your server.js
+app.get('/api/debug/withdrawal-orders', auth, async (req, res) => {
+  try {
+    const { date, paymentMethod } = req.query;
+    const restaurantId = req.user.restaurant._id;
+    
+    console.log('🔍 Debug withdrawal orders:', { date, paymentMethod, restaurantId });
+    
+    // Parse date
+    const targetDate = new Date(date);
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    console.log('📅 Date range:', {
+      start: startOfDay.toISOString(),
+      end: endOfDay.toISOString(),
+      targetDate: targetDate.toISOString()
+    });
+    
+    // Get all orders for this date
+    const allOrders = await Order.find({
+      restaurant: restaurantId,
+      createdAt: { $gte: startOfDay, $lte: endOfDay }
+    }).lean();
+    
+    console.log(`📊 Found ${allOrders.length} total orders on ${date}`);
+    
+    // Check each order
+    const analyzedOrders = allOrders.map(order => {
+      const orderDate = new Date(order.createdAt).toISOString().split('T')[0];
+      const orderMethod = order.paymentDetails?.method || '';
+      const serviceCharge = order.amountPaidWithCharges - order.totalAmount;
+      
+      return {
+        orderNumber: order.orderNumber,
+        orderDate,
+        paymentMethod: orderMethod,
+        paymentStatus: order.paymentStatus,
+        withdrawn: order.withdrawn,
+        serviceCharge,
+        isEligibleForWithdrawal: order.isEligibleForWithdrawal,
+        matchesPaymentMethod: orderMethod.toLowerCase().includes(paymentMethod?.toLowerCase() || ''),
+        hasPositiveServiceCharge: serviceCharge > 0,
+        shouldBeIncluded: order.paymentStatus === 'paid' && 
+                         !order.withdrawn && 
+                         orderMethod.toLowerCase().includes(paymentMethod?.toLowerCase() || '') &&
+                         serviceCharge > 0
+      };
+    });
+    
+    res.json({
+      message: 'Debug analysis',
+      date,
+      paymentMethod,
+      totalOrders: allOrders.length,
+      analyzedOrders,
+      summary: {
+        paidOrders: allOrders.filter(o => o.paymentStatus === 'paid').length,
+        withdrawnOrders: allOrders.filter(o => o.withdrawn).length,
+        eligibleByManualFlag: allOrders.filter(o => o.isEligibleForWithdrawal).length,
+        matchingPaymentMethod: allOrders.filter(o => o.paymentDetails?.method?.toLowerCase().includes(paymentMethod?.toLowerCase() || '')).length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Debug error:', error);
+    res.status(500).json({ error: 'Debug failed', details: error.message });
+  }
+});
+// Add this debug route to server.js
+app.get('/api/debug/withdrawal-query', auth, async (req, res) => {
+  try {
+    const { date, paymentMethod } = req.query;
+    const restaurantId = req.user.restaurant._id;
+    
+    console.log('🔍 Debug withdrawal query:', {
+      restaurantId: restaurantId.toString(),
+      userRestaurantId: req.user.restaurant._id.toString(),
+      date,
+      paymentMethod
+    });
+    
+    // Create date range
+    const startDate = new Date(date);
+    startDate.setHours(0, 0, 0, 0);
+    
+    const endDate = new Date(date);
+    endDate.setHours(23, 59, 59, 999);
+    
+    console.log('📅 Date range:', {
+      start: startDate.toISOString(),
+      end: endDate.toISOString()
+    });
+    
+    // Get the specific order
+    const specificOrder = await Order.findOne({
+      orderNumber: "ORD-1766680244236-648"
+    });
+    
+    console.log('🔍 Specific order details:', {
+      orderNumber: specificOrder?.orderNumber,
+      restaurantId: specificOrder?.restaurant?.toString(),
+      createdAt: specificOrder?.createdAt?.toISOString(),
+      paymentMethod: specificOrder?.paymentDetails?.method,
+      paymentStatus: specificOrder?.paymentStatus,
+      withdrawn: specificOrder?.withdrawn,
+      isEligibleForWithdrawal: specificOrder?.isEligibleForWithdrawal,
+      amountPaidWithCharges: specificOrder?.amountPaidWithCharges,
+      totalAmount: specificOrder?.totalAmount
+    });
+    
+    // Test the exact query
+    const query = {
+      restaurant: restaurantId,
+      paymentStatus: 'paid',
+      withdrawn: false,
+      'paymentDetails.method': { $regex: paymentMethod, $options: 'i' },
+      createdAt: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    };
+    
+    console.log('🔍 Query being executed:', JSON.stringify(query, null, 2));
+    
+    const results = await Order.find(query);
+    
+    console.log(`📊 Query returned ${results.length} orders`);
+    results.forEach(order => {
+      console.log(`   • ${order.orderNumber}: ${order.paymentDetails?.method}`);
+    });
+    
+    // Also test with restaurant ID from the actual order
+    if (specificOrder) {
+      const queryWithOrderRestaurant = {
+        restaurant: specificOrder.restaurant,
+        paymentStatus: 'paid',
+        withdrawn: false,
+        'paymentDetails.method': { $regex: paymentMethod, $options: 'i' },
+        createdAt: {
+          $gte: startDate,
+          $lte: endDate
+        }
+      };
+      
+      console.log('🔍 Query with order\'s restaurant ID:', JSON.stringify(queryWithOrderRestaurant, null, 2));
+      
+      const results2 = await Order.find(queryWithOrderRestaurant);
+      console.log(`📊 Query with order's restaurant ID returned ${results2.length} orders`);
+    }
+    
+    res.json({
+      message: 'Debug query completed',
+      query,
+      results: results.map(o => ({
+        orderNumber: o.orderNumber,
+        restaurant: o.restaurant?.toString(),
+        paymentMethod: o.paymentDetails?.method,
+        createdAt: o.createdAt,
+        isEligibleForWithdrawal: o.isEligibleForWithdrawal
+      })),
+      specificOrder: specificOrder ? {
+        orderNumber: specificOrder.orderNumber,
+        restaurant: specificOrder.restaurant?.toString(),
+        createdAt: specificOrder.createdAt,
+        paymentMethod: specificOrder.paymentDetails?.method,
+        isEligibleForWithdrawal: specificOrder.isEligibleForWithdrawal
+      } : null
+    });
+    
+  } catch (error) {
+    console.error('❌ Debug error:', error);
+    res.status(500).json({ error: 'Debug failed', details: error.message });
+  }
+});
 // In the GET /api/restaurants/current endpoint (around line 140)
 app.get('/api/restaurants/current', auth, async (req, res) => {
   try {
